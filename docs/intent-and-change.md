@@ -66,3 +66,14 @@ not need reconciliation against its own records yet.
 We do not know how long a reservation may stay in AWAITING_PAYMENT before
 the held slot is released, and what happens if the gateway callback
 arrives after that timeout — the user paid, but the slot is gone.
+
+## Selected future pressure
+Category: R
+
+Concrete pressure: Systém se rozšíří z interního parkoviště na veřejné stanice s placenou rezervací.
+Dvojitá rezervace pak znamená, že platící zákazník přijede k obsazené stanici.
+
+Why it is relevant to our reservation system: Dnes stojí překryv někoho pět minut čekání. Jakmile do hry vstoupí platba, stejná
+chyba znamená vracení peněz, stížnosti a ztrátu důvěry. Pravidlo o překryvu proto
+musí být vynuceno na jednom místě v service vrstvě a pokryto automatickým
+testem, ne ponecháno na kontrole v UI.

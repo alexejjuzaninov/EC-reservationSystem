@@ -145,3 +145,73 @@ E-maily (Notification Service):
 5. **D5 Pravidla jsou napsaná dvakrát.** `reservation.py` a `app/index.html` obsahují stejnou doménu ve dvou jazycích. Shodu dnes hlídá diferenciální test; v C03 by webová ukázka měla volat jedno API místo vlastní kopie pravidel.
 
 **Commit / tag aplikace:** tag `c02-baseline-v0.2`, commit [DOPLNIT hash]. Příkaz ověření: `python reservation.py test`.
+
+## C05 DD Verification Evidence
+
+**Tests derived from DD** (`tests/test_allocation.py`, 13 testů):
+
+| DD element / decision | What must hold? | Test level | Test case |
+|---|---|---|---|
+| kontrakt `AllocationPolicy.check()` | volný slot → `allow()`, vstupy se nezmění | unit | `test_free_slot_is_allowed_and_inputs_are_not_changed` |
+| algoritmus: BR-01 hranice | navazující intervaly nejsou překryv | unit | `test_adjacent_interval_is_not_an_overlap` |
+| algoritmus: BR-02 | OVERLAP vrací id všech konfliktních | unit | `test_overlap_returns_code_and_all_conflicting_ids` |
+| algoritmus: jen CONFIRMED blokuje | DRAFT, PENDING, CANCELLED, REJECTED, EXPIRED neblokují | unit | `test_only_confirmed_reservations_block` |
+| algoritmus: BR-04 a UTC den | 23:30 UTC a 00:30 UTC dalšího dne jsou různé dny | unit | `test_daily_limit_uses_utc_date_of_start` |
+| decision table: pořadí pravidel | INACTIVE_STATION před OVERLAP před DAILY_LIMIT | unit | `test_check_order_inactive_then_overlap_then_daily_limit` |
+| kontrakt `ReservationRepository.relevant_for()` | jen CONFIRMED téže stanice nebo téhož uživatele, bez kandidáta | unit | `test_relevant_for_returns_confirmed_of_same_station_or_user_only` |
+| state transition | DRAFT → CONFIRMED, právě jeden e-mail | component | `test_state_transition_draft_to_confirmed_and_mail_queued_once` |
+| failure behavior | zamítnutá alokace: stav DRAFT, žádný e-mail | component | `test_rejected_allocation_leaves_reservation_draft_and_sends_nothing` |
+| failure behavior Notifier | libovolná výjimka z `send()` → CONFIRMED, FAILED, volající chybu nedostane | component | `test_unexpected_notifier_error_does_not_reach_caller` |
+| collaboration: e-mail mimo zámek | pomalý `send()` neblokuje jinou operaci (< 0,3 s) | component | `test_slow_notifier_does_not_block_other_operations` |
+| concurrency REQ-04 | dvě souběžná konfliktní potvrzení → právě jedno CONFIRMED | component | `test_concurrent_conflicting_confirmations_allow_exactly_one` |
+| collaboration: jedno místo pravidla | Confirm i Approve volají stejnou policy | component | `test_approve_uses_the_same_policy` |
+
+**Zdůvodnění úrovně u vybraných testů:**
+
+- `test_check_order_inactive_then_overlap_then_daily_limit`
+  - Selected level: unit.
+  - Why this level: `AllocationPolicy` je čistá funkce, takže stačí sestavit vstupy přímo, bez systému, hodin a zámku.
+  - What design decision does this test verify? Pořadí kontrol je součástí kontraktu: volající dostane vždy první porušené pravidlo v pořadí INACTIVE_STATION → OVERLAP → DAILY_LIMIT.
+- `test_slow_notifier_does_not_block_other_operations`
+  - Selected level: component (systém + zámek + Notifier, dvě vlákna).
+  - Why this level: ověřuje spolupráci prvků v čase; na úrovni jedné třídy ho vidět nelze.
+  - What design decision does this test verify? E-mail se připraví pod zámkem, ale odešle až po jeho uvolnění (oprava nálezu 2 z C03).
+- `test_unexpected_notifier_error_does_not_reach_caller`
+  - Selected level: component s náhradním `Notifier`.
+  - Why this level: chybu externí služby simuluje dosazená implementace rozhraní.
+  - What design decision does this test verify? REQ-09: jakákoli chyba služby se zapíše jako FAILED a výsledek operace nemění (oprava nálezu 3 z C03).
+
+**Unit/component tests executed:**
+
+```text
+$ python -m unittest discover -s tests -v
+...
+Ran 13 tests in 1.06s
+OK
+
+$ python reservation.py test
+40/40 příkladů prošlo.
+```
+
+Mutační kontrola testů: e-mail odeslaný pod zámkem → selže `test_slow_notifier…`; zachycení jen `NotificationUnavailable` → selže `test_unexpected_notifier…`; přesunutí kontroly provozu stanice za BR-04 → selže `test_check_order…`. Diferenciální test proti `app/index.html` (4000 náhodných posloupností) má po refaktoringu 0 rozdílů.
+
+**Design ↔ implementation mismatch:**
+
+| DD decision | Implemented? | Evidence | Action |
+|---|---|---|---|
+| `AllocationPolicy` jako čistá funkce s pevným pořadím pravidel | YES | `reservation.py` `AllocationPolicy.check()`; testy policy | keep |
+| Confirm i Approve rozhoduje stejná policy | YES | `_check_allocation()`; `test_approve_uses_the_same_policy` | keep |
+| systém závisí jen na kontraktu `ReservationRepository` | PARTLY, opraveno | první verze měla v konstruktoru typ `InMemoryReservationRepository` a vlastnost `reservations` četla přímo `repository.items` | update code: typ `ReservationRepository`, `reservations` jde přes `all()` |
+| e-mail mimo zámek, jakákoli chyba → FAILED | YES | `_queue_notification()`, `_dispatch_notifications()`; dva component testy | keep |
+| jeden zámek zajišťuje REQ-04 | PARTLY | platí jen uvnitř jednoho procesu | keep pro C05; v CP1 nahradit zárukou v DB (otázka A8 z C03) |
+| jedno místo pravidla | PARTLY | `app/index.html` má vlastní kopii; jediná změna tam: zachycení jakékoli chyby e-mailu | keep, shodu hlídá diferenciální test (driver D5) |
+
+**Resolution:** kód upraven tam, kde se odchýlil od návrhu (závislost na kontraktu repository). Odchylky, které návrh vědomě přijímá (zámek v procesu, kopie pravidel ve webu), zůstávají a jsou vedené jako riziko.
+
+**Remaining design risk:**
+
+- REQ-04 platí jen v jednom procesu; `SqlReservationRepository` potřebuje omezení v DB nebo zámek řádku stanice;
+- e-mail se odesílá synchronně ve vlákně volajícího; volající na pomalou službu stále čeká, jen už neblokuje ostatní operace; skutečná fronta (outbox v DB) je úkol pro CP1;
+- nedoručené e-maily se znovu neposílají (TBD-02).
+
+**Commit/tag:** tag `c05-detailed-design`, commit [DOPLNIT hash].

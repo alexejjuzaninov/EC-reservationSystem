@@ -4,7 +4,9 @@ Doména, aktéři a pravidla jsou z C01 (docs/intent-and-change.md): firemní na
 zaměstnanci, Facility admin a externí Notification Service. Specifikace je v README.md.
 
 Architektura je záměrně jednoduchá: jeden modul, data jen v paměti, jeden zámek pro všechny
-operace. V C03 se z ní stane walking skeleton z C01 (FastAPI + PostgreSQL).
+operace. Přidělení stanice (Confirm, Approve) je od C05 navržené jako samostatná jednotka:
+AllocationPolicy rozhoduje, ReservationRepository poskytuje data, e-maily odcházejí až po
+uvolnění zámku. Návrh je v docs/architecture-and-decisions.md, část C05 Detailed Design.
 
 Spuštění (Python 3.10+, bez dalších balíčků):
     python reservation.py test    # příklady ověření ze specifikace, výsledek PASS/FAIL
@@ -19,7 +21,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Protocol, Tuple
 
 UTC = timezone.utc
 MAX_DURATION = timedelta(hours=4)  # BR-04
@@ -127,23 +129,140 @@ def format_interval(start: datetime, end: datetime) -> str:
     return f"{start:%Y-%m-%d %H:%M}–{end:%Y-%m-%d %H:%M}"
 
 
+def utc_day(moment: datetime):
+    """BR-04: kalendářní den = datum v UTC."""
+    return moment.astimezone(UTC).date()
+
+
+# =============================================================================
+# C05 Detailed Design: přidělení stanice (Reservation allocation)
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class AllocationDecision:
+    """Výsledek AllocationPolicy.check(): povoleno, nebo kód důvodu a konfliktní rezervace."""
+
+    allowed: bool
+    code: Optional[str] = None
+    related: Tuple[str, ...] = ()
+
+    @staticmethod
+    def allow() -> "AllocationDecision":
+        return AllocationDecision(True)
+
+    @staticmethod
+    def deny(code: str, related: Iterable[str] = ()) -> "AllocationDecision":
+        return AllocationDecision(False, code, tuple(related))
+
+
+ALLOCATION_MESSAGES = {
+    "INACTIVE_STATION": "Stanice je mimo provoz.",
+    "OVERLAP": "Stanice je v tomto čase obsazená potvrzenou rezervací (BR-02).",
+    "DAILY_LIMIT": "Uživatel už má v tento den potvrzenou rezervaci (BR-04).",
+}
+
+
+class AllocationPolicy:
+    """Rozhodne, zda se rezervace smí stát CONFIRMED (REQ-03, REQ-06; BR-02, BR-04).
+
+    Čistá funkce nad daty: nic nemění, nic neukládá, nečte hodiny a nevolá služby.
+    Pořadí kontrol je součástí kontraktu: provoz stanice, potom BR-02, potom BR-04.
+    Ze vstupu `others` bere v úvahu jen CONFIRMED rezervace různé od kandidáta.
+    """
+
+    def check(
+        self, candidate: Reservation, station: ChargingStation, others: Iterable[Reservation]
+    ) -> AllocationDecision:
+        if not station.active:
+            return AllocationDecision.deny("INACTIVE_STATION")
+        confirmed = [r for r in others if r.id != candidate.id and r.state == State.CONFIRMED]
+        overlapping = [
+            r.id
+            for r in confirmed
+            if r.station_id == candidate.station_id
+            and overlaps(candidate.start_time, candidate.end_time, r.start_time, r.end_time)
+        ]
+        if overlapping:
+            return AllocationDecision.deny("OVERLAP", overlapping)
+        day = utc_day(candidate.start_time)
+        same_day = [
+            r.id for r in confirmed if r.user_id == candidate.user_id and utc_day(r.start_time) == day
+        ]
+        if same_day:
+            return AllocationDecision.deny("DAILY_LIMIT", same_day)
+        return AllocationDecision.allow()
+
+
+class ReservationRepository(Protocol):
+    """Kontrakt úložiště rezervací. Dnes v paměti, v CP1 nad PostgreSQL."""
+
+    def get(self, reservation_id: str) -> Optional[Reservation]: ...
+
+    def add(self, reservation: Reservation) -> None: ...
+
+    def all(self) -> List[Reservation]: ...
+
+    def relevant_for(self, candidate: Reservation) -> List[Reservation]:
+        """CONFIRMED rezervace téže stanice nebo téhož uživatele, bez kandidáta."""
+        ...
+
+
+class InMemoryReservationRepository:
+    def __init__(self) -> None:
+        self.items: Dict[str, Reservation] = {}
+
+    def get(self, reservation_id: str) -> Optional[Reservation]:
+        return self.items.get(reservation_id)
+
+    def add(self, reservation: Reservation) -> None:
+        self.items[reservation.id] = reservation
+
+    def all(self) -> List[Reservation]:
+        return list(self.items.values())
+
+    def relevant_for(self, candidate: Reservation) -> List[Reservation]:
+        return [
+            r
+            for r in self.items.values()
+            if r.id != candidate.id
+            and r.state == State.CONFIRMED
+            and (r.station_id == candidate.station_id or r.user_id == candidate.user_id)
+        ]
+
+
+class Notifier(Protocol):
+    """Kontrakt Notification Service: odeslat e-mail, nebo vyhodit výjimku."""
+
+    def send(self, to: str, subject: str, body: str) -> None: ...
+
+
 class ChargingReservationSystem:
     """Systém v paměti. Jeden zámek serializuje všechny operace (REQ-04, souběh Cancel × Confirm)."""
 
     def __init__(
         self,
         clock: Optional[Callable[[], datetime]] = None,
-        notifier: Optional[NotificationService] = None,
+        notifier: Optional[Notifier] = None,
+        repository: Optional[ReservationRepository] = None,
+        policy: Optional[AllocationPolicy] = None,
     ):
         self._clock = clock or (lambda: datetime.now(UTC))
         self._lock = threading.Lock()
         self.notifier = notifier or NotificationService()
+        self.repository = repository or InMemoryReservationRepository()
+        self.policy = policy or AllocationPolicy()
         self.users: Dict[str, User] = {}
         self.stations: Dict[str, ChargingStation] = {}
-        self.reservations: Dict[str, Reservation] = {}
         self.notifications: List[dict] = []  # pokusy o e-mail (REQ-09)
+        self._outbox: List[dict] = []  # e-maily čekající na odeslání po uvolnění zámku
         self._seq = 0
         self.after_checks: Optional[Callable[[], None]] = None  # háček pro test souběhu (REQ-04)
+
+    @property
+    def reservations(self) -> Dict[str, Reservation]:
+        """Pohled jen pro čtení (testy, ukázka); jde přes kontrakt repository, ne přes jeho vnitřek."""
+        return {r.id: r for r in self.repository.all()}
 
     def now(self) -> datetime:
         return self._clock()
@@ -181,7 +300,7 @@ class ChargingReservationSystem:
                 end_time=end,
                 created_at=self.now(),
             )
-            self.reservations[reservation.id] = reservation
+            self.repository.add(reservation)
             return reservation
 
     # ---- OP-02 Check Availability (REQ-02) -----------------------------------
@@ -196,75 +315,87 @@ class ChargingReservationSystem:
 
     # ---- OP-03 Confirm Reservation (REQ-03, REQ-03b, REQ-04) -----------------
     def confirm(self, user_id: str, reservation_id: str) -> Reservation:
-        with self._lock:
-            self._expire_overdue()
-            self._require_role(user_id, Role.EMPLOYEE)
-            reservation = self._get_reservation(reservation_id)
-            if reservation.user_id != user_id:
-                raise ReservationError("UNAUTHORIZED", "Potvrdit může jen vlastník rezervace.")
-            if reservation.state != State.DRAFT:
-                raise ReservationError(
-                    "INVALID_STATE", f"Potvrdit lze jen DRAFT, rezervace je {reservation.state.value}."
-                )
-            if not self.now() < reservation.start_time:
-                raise ReservationError("TOO_LATE", "Rezervace už začala, potvrdit ji nelze (REQ-03).")
-            if self.stations[reservation.station_id].requires_approval:
-                # v0.2 (REQ-03b, BR-05): jen žádost o schválení, stanice se ještě neblokuje
-                reservation.state = State.PENDING_APPROVAL
+        try:
+            with self._lock:
+                self._expire_overdue()
+                self._require_role(user_id, Role.EMPLOYEE)
+                reservation = self._get_reservation(reservation_id)
+                if reservation.user_id != user_id:
+                    raise ReservationError("UNAUTHORIZED", "Potvrdit může jen vlastník rezervace.")
+                if reservation.state != State.DRAFT:
+                    raise ReservationError(
+                        "INVALID_STATE", f"Potvrdit lze jen DRAFT, rezervace je {reservation.state.value}."
+                    )
+                if not self.now() < reservation.start_time:
+                    raise ReservationError("TOO_LATE", "Rezervace už začala, potvrdit ji nelze (REQ-03).")
+                if self.stations[reservation.station_id].requires_approval:
+                    # v0.2 (REQ-03b, BR-05): jen žádost o schválení, stanice se ještě neblokuje
+                    reservation.state = State.PENDING_APPROVAL
+                    return reservation
+                self._check_allocation(reservation)
+                if self.after_checks:
+                    self.after_checks()
+                reservation.state = State.CONFIRMED
+                self._queue_notification(reservation, "CONFIRMED")
                 return reservation
-            self._check_allocation(reservation)
-            if self.after_checks:
-                self.after_checks()
-            reservation.state = State.CONFIRMED
-            self._notify(reservation, "CONFIRMED")
-            return reservation
+        finally:
+            self._dispatch_notifications()  # e-mail až mimo zámek
 
     # ---- OP-05 Approve / Reject Reservation (v0.2: REQ-06, REQ-07, REQ-08) ---
     def approve(self, user_id: str, reservation_id: str) -> Reservation:
-        with self._lock:
-            self._expire_overdue()
-            self._require_role(user_id, Role.ADMIN)
-            reservation = self._get_reservation(reservation_id)
-            self._require_pending(reservation)
-            self._check_allocation(reservation)
-            reservation.state = State.CONFIRMED
-            self._notify(reservation, "CONFIRMED")
-            return reservation
+        try:
+            with self._lock:
+                self._expire_overdue()
+                self._require_role(user_id, Role.ADMIN)
+                reservation = self._get_reservation(reservation_id)
+                self._require_pending(reservation)
+                self._check_allocation(reservation)
+                reservation.state = State.CONFIRMED
+                self._queue_notification(reservation, "CONFIRMED")
+                return reservation
+        finally:
+            self._dispatch_notifications()  # e-mail až mimo zámek
 
     def reject(self, user_id: str, reservation_id: str) -> Reservation:
-        with self._lock:
-            self._expire_overdue()
-            self._require_role(user_id, Role.ADMIN)
-            reservation = self._get_reservation(reservation_id)
-            self._require_pending(reservation)
-            reservation.state = State.REJECTED
-            self._notify(reservation, "REJECTED")
-            return reservation
+        try:
+            with self._lock:
+                self._expire_overdue()
+                self._require_role(user_id, Role.ADMIN)
+                reservation = self._get_reservation(reservation_id)
+                self._require_pending(reservation)
+                reservation.state = State.REJECTED
+                self._queue_notification(reservation, "REJECTED")
+                return reservation
+        finally:
+            self._dispatch_notifications()  # e-mail až mimo zámek
 
     # ---- OP-04 Cancel Reservation (REQ-05) -----------------------------------
     def cancel(self, user_id: str, reservation_id: str) -> Reservation:
-        with self._lock:
-            self._expire_overdue()
-            user = self._require_user(user_id)
-            reservation = self._get_reservation(reservation_id)
-            if user.role == Role.EMPLOYEE and reservation.user_id != user_id:
-                raise ReservationError("UNAUTHORIZED", "Zaměstnanec může zrušit jen vlastní rezervaci.")
-            if reservation.state == State.CANCELLED:
-                return reservation  # idempotentní úspěch (BR-03): nic se nemění, e-mail se neposílá
-            if reservation.state not in CANCELLABLE_STATES:
-                raise ReservationError(
-                    "INVALID_STATE", f"Rezervaci ve stavu {reservation.state.value} nelze zrušit (BR-03)."
-                )
-            if not self.now() < reservation.start_time:
-                raise ReservationError("TOO_LATE", "Zrušit lze jen před začátkem rezervace (BR-03).")
-            reservation.state = State.CANCELLED
-            self._notify(reservation, "CANCELLED")
-            return reservation
+        try:
+            with self._lock:
+                self._expire_overdue()
+                user = self._require_user(user_id)
+                reservation = self._get_reservation(reservation_id)
+                if user.role == Role.EMPLOYEE and reservation.user_id != user_id:
+                    raise ReservationError("UNAUTHORIZED", "Zaměstnanec může zrušit jen vlastní rezervaci.")
+                if reservation.state == State.CANCELLED:
+                    return reservation  # idempotentní úspěch (BR-03): nic se nemění, e-mail se neposílá
+                if reservation.state not in CANCELLABLE_STATES:
+                    raise ReservationError(
+                        "INVALID_STATE", f"Rezervaci ve stavu {reservation.state.value} nelze zrušit (BR-03)."
+                    )
+                if not self.now() < reservation.start_time:
+                    raise ReservationError("TOO_LATE", "Zrušit lze jen před začátkem rezervace (BR-03).")
+                reservation.state = State.CANCELLED
+                self._queue_notification(reservation, "CANCELLED")
+                return reservation
+        finally:
+            self._dispatch_notifications()  # e-mail až mimo zámek
 
     def list_reservations(self) -> List[Reservation]:
         with self._lock:
             self._expire_overdue()
-            return list(self.reservations.values())
+            return self.repository.all()
 
     # ---- pravidla -----------------------------------------------------------
     def _expire_overdue(self) -> None:
@@ -273,53 +404,28 @@ class ChargingReservationSystem:
         Vyhodnocuje se na začátku každé operace (líně), časovač zatím není (driver D3 pro C03).
         """
         now = self.now()
-        for reservation in self.reservations.values():
+        for reservation in self.repository.all():
             if reservation.state == State.PENDING_APPROVAL and now >= reservation.start_time:
                 reservation.state = State.EXPIRED
 
     def _check_allocation(self, reservation: Reservation) -> None:
-        """Podmínky, za kterých se rezervace smí stát CONFIRMED (REQ-03, REQ-06)."""
-        if not self.stations[reservation.station_id].active:
-            raise ReservationError("INACTIVE_STATION", "Stanice je mimo provoz.")
-        overlapping = self._confirmed_overlaps(
-            reservation.station_id, reservation.start_time, reservation.end_time, reservation.id
+        """Podmínky, za kterých se rezervace smí stát CONFIRMED, rozhoduje AllocationPolicy."""
+        decision = self.policy.check(
+            reservation, self.stations[reservation.station_id], self.repository.relevant_for(reservation)
         )
-        if overlapping:
-            raise ReservationError(
-                "OVERLAP",
-                "Stanice je v tomto čase obsazená potvrzenou rezervací (BR-02).",
-                [r.id for r in overlapping],
-            )
-        same_day = self._confirmed_same_day(reservation)
-        if same_day:
-            raise ReservationError(
-                "DAILY_LIMIT",
-                "Uživatel už má v tento den potvrzenou rezervaci (BR-04).",
-                [r.id for r in same_day],
-            )
+        if not decision.allowed:
+            raise ReservationError(decision.code, ALLOCATION_MESSAGES[decision.code], list(decision.related))
 
     def _confirmed_overlaps(
         self, station_id: str, start: datetime, end: datetime, ignore_id: Optional[str] = None
     ) -> List[Reservation]:
         return [
             r
-            for r in self.reservations.values()
+            for r in self.repository.all()
             if r.id != ignore_id
             and r.station_id == station_id
             and r.state == State.CONFIRMED
             and overlaps(start, end, r.start_time, r.end_time)
-        ]
-
-    def _confirmed_same_day(self, reservation: Reservation) -> List[Reservation]:
-        """BR-04: kalendářní den = datum začátku rezervace v UTC."""
-        day = reservation.start_time.astimezone(UTC).date()
-        return [
-            r
-            for r in self.reservations.values()
-            if r.id != reservation.id
-            and r.user_id == reservation.user_id
-            and r.state == State.CONFIRMED
-            and r.start_time.astimezone(UTC).date() == day
         ]
 
     def _validate_interval(self, start: datetime, end: datetime) -> None:
@@ -339,27 +445,35 @@ class ChargingReservationSystem:
                 f"Rozhodnout lze jen o PENDING_APPROVAL, rezervace je {reservation.state.value}.",
             )
 
-    def _notify(self, reservation: Reservation, event: str) -> None:
-        """REQ-09: e-mail vlastníkovi po změně stavu; výpadek služby výsledek operace nemění."""
+    def _queue_notification(self, reservation: Reservation, event: str) -> None:
+        """REQ-09: připraví e-mail vlastníkovi; volá se pod zámkem, odesílá se až po něm."""
         user = self.users[reservation.user_id]
         station = self.stations[reservation.station_id]
-        subject = SUBJECTS[event].format(id=reservation.id)
-        body = (
-            f"Stanice {station.id} ({station.connector_type}), "
-            f"{format_interval(reservation.start_time, reservation.end_time)} UTC."
-        )
-        entry = {
+        self._outbox.append({
             "reservation_id": reservation.id,
             "event": event,
             "to": user.email,
-            "subject": subject,
-            "status": "SENT",
-        }
-        try:
-            self.notifier.send(user.email, subject, body)
-        except NotificationUnavailable:
-            entry["status"] = "FAILED"
-        self.notifications.append(entry)
+            "subject": SUBJECTS[event].format(id=reservation.id),
+            "body": (
+                f"Stanice {station.id} ({station.connector_type}), "
+                f"{format_interval(reservation.start_time, reservation.end_time)} UTC."
+            ),
+        })
+
+    def _dispatch_notifications(self) -> None:
+        """Odešle připravené e-maily mimo zámek. Žádná chyba služby nedoběhne k volajícímu."""
+        with self._lock:
+            pending, self._outbox = self._outbox, []
+        for mail in pending:
+            status = "SENT"
+            try:
+                self.notifier.send(mail["to"], mail["subject"], mail["body"])
+            except Exception:  # NotificationUnavailable, timeout, chyba sítě...
+                status = "FAILED"
+            entry = {k: mail[k] for k in ("reservation_id", "event", "to", "subject")}
+            entry["status"] = status
+            with self._lock:
+                self.notifications.append(entry)
 
     # ---- přístup k datům ----------------------------------------------------
     def _require_user(self, user_id: str) -> User:
@@ -383,7 +497,7 @@ class ChargingReservationSystem:
         return station
 
     def _get_reservation(self, reservation_id: str) -> Reservation:
-        reservation = self.reservations.get(reservation_id)
+        reservation = self.repository.get(reservation_id)
         if reservation is None:
             raise ReservationError("UNKNOWN_RESERVATION", "Rezervace neexistuje.")
         return reservation

@@ -6,9 +6,10 @@ potvrzení, ne při vytvoření (DRAFT je jen záměr). Intervaly jsou polootev�
 from datetime import datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .models import Reservation, ReservationState
+from .models import NO_OVERLAP_CONSTRAINT, Reservation, ReservationState
 
 
 class OverlapError(Exception):
@@ -31,10 +32,19 @@ class ReservationService:
         reservation = self.session.get(Reservation, reservation_id)
         if reservation.state is not ReservationState.DRAFT:
             raise ValueError(f"Cannot confirm reservation in state {reservation.state.value}")
-        if self._find_overlapping(reservation):  # kontrola ...
+        # 1) Rychlá kontrola v aplikaci: srozumitelná chyba v běžném (sekvenčním) případě.
+        if self._find_overlapping(reservation):
             raise OverlapError("Station already has a CONFIRMED reservation in this time range")
-        reservation.state = ReservationState.CONFIRMED  # ... a zápis jsou dva oddělené kroky
-        self.session.commit()
+        # 2) Autoritativní kontrola: EXCLUDE constraint v PostgreSQL. Platí i při souběhu,
+        #    kdy oba požadavky v kroku 1 viděly "bez konfliktu".
+        reservation.state = ReservationState.CONFIRMED
+        try:
+            self.session.commit()
+        except IntegrityError as exc:
+            self.session.rollback()
+            if getattr(getattr(exc.orig, "diag", None), "constraint_name", None) == NO_OVERLAP_CONSTRAINT:
+                raise OverlapError("Station already has a CONFIRMED reservation in this time range") from exc
+            raise
         return reservation
 
     def _find_overlapping(self, reservation: Reservation) -> list[Reservation]:

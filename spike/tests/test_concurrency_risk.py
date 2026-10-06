@@ -1,18 +1,15 @@
 """Otázka spike: mohou se dvě souběžná potvrzení prosadit obě?
 
-Bariéra zajistí, že oba požadavky dokončí kontrolu překryvu dřív, než kterýkoli z nich zapíše.
-xfail(strict=True) dokumentuje současné chování: databáze sama žádné omezení nemá.
+Bariéra zajistí, že oba požadavky dokončí kontrolu překryvu v aplikaci dřív, než kterýkoli
+z nich zapíše. Obě tedy vidí "bez konfliktu". Pravidlo musí udržet až EXCLUDE constraint v DB.
 """
 import threading
-
-import pytest
 
 from src.models import Reservation, ReservationState
 from src.service import OverlapError, ReservationService
 from tests.conftest import at
 
 
-@pytest.mark.xfail(strict=True, reason="Bez DB omezení nebo zámku projdou obě potvrzení (driver pro C03 / CP1)")
 def test_two_concurrent_confirmations_cannot_both_succeed(session_factory, data, monkeypatch):
     station, alice, bob = data
     with session_factory() as s:
@@ -30,12 +27,14 @@ def test_two_concurrent_confirmations_cannot_both_succeed(session_factory, data,
 
     monkeypatch.setattr(ReservationService, "_find_overlapping", find_then_wait)
 
+    rejected = []
+
     def confirm(reservation_id):
         with session_factory() as s:
             try:
                 ReservationService(s).confirm(reservation_id)
             except OverlapError:
-                pass
+                rejected.append(reservation_id)
 
     threads = [threading.Thread(target=confirm, args=(rid,)) for rid in (a, b)]
     for t in threads:
@@ -46,3 +45,4 @@ def test_two_concurrent_confirmations_cannot_both_succeed(session_factory, data,
     with session_factory() as s:
         states = [s.get(Reservation, rid).state for rid in (a, b)]
     assert states.count(ReservationState.CONFIRMED) == 1
+    assert len(rejected) == 1  # druhý dostal OverlapError, ne neošetřenou výjimku z DB

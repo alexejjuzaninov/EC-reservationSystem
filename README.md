@@ -76,15 +76,34 @@ python -m unittest discover -s tests -v    # 13 unit/component testů z Detailed
 
 Webová ukázka: otevřete soubor `app/index.html` v prohlížeči (stačí dvojklik). Nepotřebuje server ani internet a používá stejná pravidla jako `reservation.py`. Nahoře jsou připravené ukázky, které jedním klikem projdou úspěšný i chybový případ každé operace. Návod je v části [Jak používat webovou ukázku](#jak-používat-webovou-ukázku).
 
-Engineering spike z C01 (PostgreSQL) se spouští zvlášť:
+Engineering spike z C01 (PostgreSQL) se spouští zvlášť. Potřebuje Docker (na Windows Docker Desktop, který vyžaduje WSL 2: `wsl --install` v PowerShellu spuštěném jako správce) a Python 3.12.
+
+Nejdřív databáze (po `docker run` počkejte pár sekund, než PostgreSQL naběhne):
 
 ```bash
 docker run --name swi-db -e POSTGRES_PASSWORD=swi -e POSTGRES_DB=reservations -p 5432:5432 -d postgres:16
 docker exec swi-db psql -U postgres -c "CREATE DATABASE reservations_test;"
-cd spike
-pip install -r requirements.txt
-pytest -v
 ```
+
+Potom virtuální prostředí, závislosti a testy. Windows (PowerShell, Python přes spouštěč `py`):
+
+```powershell
+cd spike
+py -3.12 -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python -m pytest -v
+```
+
+Linux / macOS:
+
+```bash
+cd spike
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pytest -v
+```
+
+Očekávaný výsledek: `4 passed`. Po restartu počítače stačí databázi znovu spustit příkazem `docker start swi-db`.
 
 ## Jak používat webovou ukázku
 
@@ -233,7 +252,7 @@ Plné znění je v `docs/intent-and-change.md`.
 |---|---|
 | Kategorie | R: Risk / Higher consequence |
 | Pressure | systém se rozšíří z interního parkoviště na veřejné stanice s placenou rezervací; dvojitá rezervace pak znamená, že platící zákazník přijede k obsazené stanici |
-| Proč je relevantní | dnes stojí překryv pět minut čekání, s platbou znamená vracení peněz, stížnosti a ztrátu důvěry; pravidlo o překryvu proto musí být vynucené na jednom místě v service vrstvě a pokryté automatickým testem, ne kontrolou v UI |
+| Proč je relevantní | dnes stojí překryv pět minut čekání, s platbou znamená vracení peněz, stížnosti a ztrátu důvěry; pravidlo o překryvu proto musí platit i při souběžných požadavcích a být pokryté automatickým testem, ne ponechané na kontrole v UI |
 
 ### Change a review
 
@@ -259,24 +278,11 @@ Testovaný scénář (`spike/tests/test_overlap.py`):
 
 Druhý test (`spike/tests/test_concurrency_risk.py`) odpovídá na otázku spike přímo: pustí dvě potvrzení překrývajících se rezervací ve dvou vláknech a bariérou zajistí, že oba požadavky dokončí kontrolu překryvu dřív, než kterýkoli zapíše.
 
-Pozorovaný výsledek (PostgreSQL 16, `pytest -v` ve složce `spike/`):
-
-```text
-tests/test_concurrency_risk.py::test_two_concurrent_confirmations_cannot_both_succeed XFAIL [ 50%]
-tests/test_overlap.py::test_overlapping_confirmation_is_rejected_and_state_persists PASSED [100%]
-========================= 1 passed, 1 xfailed in 0.15s =========================
-```
-
-Sekvenčně kontrola v service vrstvě překryv zachytí a navazující rezervace projde. Při souběhu ale **obě** rezervace skončí CONFIRMED (`AssertionError: assert 2 == 1`), protože databáze sama žádné omezení nemá. Test `test_overlap.py` bez kontroly překryvu padá, takže kontrolu opravdu ověřuje.
+Sekvenčně kontrola v service vrstvě překryv zachytí a navazující rezervace projde. Při souběhu ale **obě** rezervace skončily CONFIRMED (`AssertionError: assert 2 == 1`), protože databáze sama žádné omezení neměla. Proto spike doplnil EXCLUDE constraint v PostgreSQL; testy `spike/tests/test_db_constraint.py` ověřují, že databáze překryv odmítne i bez service vrstvy a navazující časy povolí.
 
 ### Evidence a rozhodnutí C01
 
-| Položka | Obsah |
-|---|---|
-| Question / unknown | Dokáže datová vrstva spolehlivě vynutit pravidlo o nepřekrývajících se CONFIRMED rezervacích, nebo se dvě souběžná potvrzení mohou prosadit obě? |
-| What we did | PostgreSQL v Dockeru, entity a service vrstva, test se dvěma překrývajícími se a jednou navazující rezervací a test souběhu se dvěma vlákny; spuštěno přes pytest |
-| Observed result | sekvenčně: překryv odmítnut, navazující rezervace potvrzena, stav po novém načtení trvá (1 passed); souběžně: obě potvrzení projdou (`assert 2 == 1`, test označen xfail) |
-| Decision / what changes | kontrolu v service vrstvě necháváme jako čitelnou validaci; aby pravidlo platilo i při souběhu, dostane CP1 záruku na úrovni databáze (EXCLUDE constraint nad `tstzrange`, nebo zámek stanice v transakci); návrh v C03; souvisí s pressure R |
+Otázka, postup, pozorovaný výsledek, rozhodnutí, výstup `pytest` po změně (`4 passed`) a kontrola, že testy při pokaženém kódu opravdu selžou, jsou v `docs/evidence-and-evolution.md`, část C01 Engineering Spike.
 
 ### Walking skeleton pro CP1
 

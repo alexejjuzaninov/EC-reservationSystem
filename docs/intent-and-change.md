@@ -61,8 +61,8 @@ Dvojitá rezervace pak znamená, že platící zákazník přijede k obsazené s
 
 Why it is relevant to our reservation system: Dnes stojí překryv někoho pět minut čekání. Jakmile do hry vstoupí platba, stejná
 chyba znamená vracení peněz, stížnosti a ztrátu důvěry. Pravidlo o překryvu proto
-musí být vynuceno na jednom místě v service vrstvě a pokryto automatickým
-testem, ne ponecháno na kontrole v UI.
+musí platit i při souběžných požadavcích a být pokryto automatickým testem, ne
+ponecháno na kontrole v UI.
 
 ## Změny po C01
 

@@ -50,7 +50,7 @@ Shodné s částí Evidence C02 v `README.md`.
 **Skutečně provedené příklady ověření:**
 
 - `python reservation.py test`: **40/40 příkladů prošlo** (výstup níže). Stejných 40 příkladů se stejnými názvy prochází i ve webové ukázce (`app/index.html`, část Automatické ověření).
-- Mutační kontrola testů: po odebrání zámku selže test souběhu (`['CONFIRMED', 'CONFIRMED']`), po odebrání denního limitu selžou oba testy `DAILY_LIMIT`, po uzavření intervalů (`<=` místo `<`) selžou tři hraniční příklady a po vypnutí kontroly provozu stanice selže příklad dostupnosti AC-2.
+- Mutační kontrola testů (`python tools/mutation_check.py`, kód se mění jen v dočasné kopii): po odebrání zámku selže test souběhu (`['CONFIRMED', 'CONFIRMED']`), po odebrání denního limitu selžou oba příklady `DAILY_LIMIT`, po uzavření intervalů (`<=` místo `<`) selžou tři hraniční příklady a po vypnutí kontroly provozu stanice selže příklad dostupnosti AC-2.
 - Diferenciální test: 4000 náhodných posloupností (60 921 operací) proběhlo v `reservation.py` i ve webové ukázce se shodným výsledkem každé operace, shodným konečným stavem i shodnými e-maily (0 rozdílů). Ve všech 4000 konečných stavech platí BR-02 i denní limit z BR-04.
 - `python reservation.py demo` (výstup níže) a připravené ukázky ve webové aplikaci, ověřené v prohlížeči Chromium.
 
@@ -213,7 +213,7 @@ $ python reservation.py test
 40/40 příkladů prošlo.
 ```
 
-Mutační kontrola testů: e-mail odeslaný pod zámkem → selže `test_slow_notifier…`; zachycení jen `NotificationUnavailable` → selže `test_unexpected_notifier…`; přesunutí kontroly provozu stanice za BR-04 → selže `test_check_order…`. Diferenciální test proti `app/index.html` (4000 náhodných posloupností) má po refaktoringu 0 rozdílů.
+Mutační kontrola testů (`python tools/mutation_check.py`): e-mail odeslaný pod zámkem → selže `test_slow_notifier…`; zachycení jen `NotificationUnavailable` → selže `test_unexpected_notifier…`; přesunutí kontroly provozu stanice za BR-04 → selže `test_check_order…`. Skript ověří i mutace z C02 a skončí chybou, pokud kontrolní běh neprojde nebo některou mutaci testy neodhalí. Výsledek: 7/7 mutací zabito.
 
 **Design ↔ implementation mismatch:**
 

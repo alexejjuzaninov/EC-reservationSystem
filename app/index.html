@@ -679,8 +679,7 @@ class ChargingReservationSystem {
     try {
       this.notifier.send(user.email, subject, body);
     } catch (e) {
-      if (!(e instanceof NotificationUnavailable)) throw e;
-      entry.status = "FAILED";
+      entry.status = "FAILED"; // jakákoli chyba služby výsledek operace nemění (C05)
     }
     this.notifications.push(entry);
   }

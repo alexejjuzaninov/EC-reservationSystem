@@ -155,3 +155,209 @@ Další nálezy pro návrh (nálezy 2 a 3): odeslání e-mailu by mělo proběhn
 ### A9. Použití AI
 
 AI posloužila k navigaci v kódu, návrhu trace a první verzi diagramu. Zapsaná tvrzení jsou ověřená v kódu (čísla řádků pro commit `af2723f`), testy `python reservation.py test` (40/40), během `python reservation.py demo` a dvěma runtime pokusy u nálezů 2 a 3.
+
+## C05 Detailed Design
+
+### Selected architecture unit
+
+| Položka | Hodnota |
+|---|---|
+| Selected architecture unit / responsibility | **Přidělení stanice (Reservation allocation):** rozhodnutí, zda se rezervace smí stát CONFIRMED, a provedení tohoto přechodu včetně notifikace |
+| Related requirement(s) | REQ-03, REQ-04, REQ-06, REQ-09 |
+| Related scenario(s) | OP-03 Confirm Reservation (stanice bez schválení), OP-05 Approve Reservation |
+| Relevant business rule(s) | BR-01 (polootevřené intervaly), BR-02 (nepřekrývání CONFIRMED), BR-04 (denní limit podle data začátku v UTC) |
+| Hranice jednotky | patří sem rozhodnutí o alokaci, data potřebná k rozhodnutí, zápis stavu a odeslání e-mailu; nepatří sem vytvoření rezervace, kontrola dostupnosti ani schvalovací workflow mimo samotné přidělení |
+
+Proč tato jednotka: v C03 vyšlo, že právě zde je hlavní logika (BR-02, BR-04) a tři nálezy: rozhodnutí je zapletené do jedné velké třídy, e-mail se posílá pod zámkem (nález 2) a neočekávaná chyba e-mailu doběhne k volajícímu (nález 3). Otázka A8 (BR-02 po přechodu na PostgreSQL) potřebuje mezi logikou a daty jasný kontrakt.
+
+### Detailed responsibilities
+
+| Detailed responsibility | Why is it needed? |
+|---|---|
+| serializovat rozhodnutí o alokaci | REQ-04: ze souběžných konfliktních potvrzení nejvýše jedno CONFIRMED |
+| ověřit oprávnění a výchozí stav (vlastník a DRAFT, resp. Facility admin a PENDING_APPROVAL, `now < start`) | přechod je povolený jen z konkrétního stavu a jen oprávněnému aktérovi |
+| načíst data potřebná k rozhodnutí (CONFIRMED rezervace téže stanice a téhož uživatele) | BR-02 a BR-04 se vyhodnocují nad potvrzenými rezervacemi; s PostgreSQL to bude jeden dotaz |
+| rozhodnout o alokaci: provoz stanice, BR-02, BR-04, v pevném pořadí | jedno místo pravidla pro Confirm i Approve (pressure R z C01) |
+| provést přechod do CONFIRMED | jediný okamžik vzniku alokace |
+| odeslat e-mail mimo kritickou sekci a zapsat výsledek | REQ-09: e-mail nesmí určovat ani zdržovat výsledek |
+
+### Design elements and ownership
+
+| Responsibility | Owner | State/data | Why here? |
+|---|---|---|---|
+| serializace, oprávnění, výchozí stav, provedení přechodu | `ChargingReservationSystem.confirm()` / `approve()` (application service) | `_lock: threading.Lock`; mění `Reservation.state` | koordinuje spolupracovníky a drží transakční hranici operace |
+| rozhodnutí o alokaci | `AllocationPolicy.check()` (policy, čistá funkce) | žádný vlastní stav; vstupem je kandidát, stanice a ostatní rezervace | testovatelné bez hodin, zámku i úložiště; stejné pro Confirm i Approve |
+| výsledek rozhodnutí | `AllocationDecision` (value object, frozen) | `allowed`, `code`, `related` | rozhodnutí je hodnota, ne výjimka; volající sám určí, jak ji přeloží |
+| data k rozhodnutí | `ReservationRepository` (interface) a `InMemoryReservationRepository` | slovník `items: Dict[str, Reservation]` | systém zná jen kontrakt; v CP1 přibude `SqlReservationRepository` bez změny policy |
+| odeslání e-mailu | `_queue_notification()` + `_dispatch_notifications()`, rozhraní `Notifier` | fronta `_outbox`, log `notifications` | e-mail se připraví pod zámkem (konzistentní data), odejde až po jeho uvolnění |
+| perzistentní stav rezervace | `Reservation` (dataclass) | `id, user_id, station_id, start_time, end_time, created_at, state` | entita z Project Frame C01 |
+
+### Key interface(s) / contract(s)
+
+```text
+<<class>> AllocationPolicy
+check(candidate: Reservation, station: ChargingStation, others: Iterable[Reservation]) : AllocationDecision
+```
+
+| Contract | |
+|---|---|
+| Preconditions | `candidate` má platný interval (`start < end`), `station` je stanice kandidáta; `others` smí obsahovat rezervace v libovolném stavu i kandidáta samotného |
+| Postconditions | vrací `AllocationDecision`; `allowed = True` právě když je stanice v provozu, kandidát se nepřekrývá s žádnou CONFIRMED rezervací téže stanice (BR-01, BR-02) a vlastník nemá jinou CONFIRMED se stejným datem začátku v UTC (BR-04); jinak `allowed = False`, `code` je první porušené pravidlo v pořadí INACTIVE_STATION → OVERLAP → DAILY_LIMIT a `related` obsahuje id všech konfliktních rezervací |
+| Side effects | žádné: nemění vstupy, nečte hodiny, nic neukládá |
+| Failures | žádné výjimky; porušení pravidla je hodnota `INACTIVE_STATION`, `OVERLAP` nebo `DAILY_LIMIT` |
+
+```text
+<<interface>> ReservationRepository
+get(id) : Reservation | None
+add(reservation) : None
+all() : List[Reservation]
+relevant_for(candidate) : List[Reservation]
+```
+
+Kontrakt `relevant_for`: vrací všechny CONFIRMED rezervace téže stanice **nebo** téhož uživatele, bez kandidáta. Je to přesně množina, kterou potřebuje `AllocationPolicy`; SQL implementace ji vrátí jedním dotazem.
+
+```text
+<<interface>> Notifier
+send(to, subject, body) : None      — při selhání vyhodí libovolnou výjimku
+```
+
+### Focused structural view
+
+```mermaid
+classDiagram
+    direction LR
+    class ChargingReservationSystem {
+        -_lock: Lock
+        -_outbox: list
+        +notifications: list
+        +confirm(user_id, reservation_id) Reservation
+        +approve(user_id, reservation_id) Reservation
+        -_check_allocation(reservation)
+        -_queue_notification(reservation, event)
+        -_dispatch_notifications()
+    }
+    class AllocationPolicy {
+        +check(candidate, station, others) AllocationDecision
+    }
+    class AllocationDecision {
+        <<value object>>
+        +allowed: bool
+        +code: str
+        +related: tuple
+    }
+    class ReservationRepository {
+        <<interface>>
+        +get(id) Reservation
+        +add(reservation)
+        +all() list
+        +relevant_for(candidate) list
+    }
+    class InMemoryReservationRepository {
+        -items: dict
+    }
+    class Notifier {
+        <<interface>>
+        +send(to, subject, body)
+    }
+    class NotificationService {
+        +available: bool
+    }
+    class Reservation {
+        <<entity>>
+        +id
+        +user_id
+        +station_id
+        +start_time
+        +end_time
+        +state: State
+    }
+    ChargingReservationSystem --> AllocationPolicy : check()
+    AllocationPolicy ..> AllocationDecision : creates
+    ChargingReservationSystem --> ReservationRepository : get / relevant_for
+    InMemoryReservationRepository ..|> ReservationRepository
+    ChargingReservationSystem --> Notifier : send() po uvolnění zámku
+    NotificationService ..|> Notifier
+    InMemoryReservationRepository o-- Reservation : owns
+    AllocationPolicy ..> Reservation : reads
+```
+
+Směr závislostí: `ChargingReservationSystem` závisí na kontraktech (`ReservationRepository`, `Notifier`) a na `AllocationPolicy`; policy nezávisí na ničem kromě entit. Implementace se dosazují v konstruktoru (`repository=`, `policy=`, `notifier=`).
+
+### Detailed sequence
+
+C03 (architektura): `Vstupní bod → ChargingReservationSystem → In-memory store / NotificationService`.
+
+C05 (DD), Confirm na stanici bez schválení:
+
+```mermaid
+sequenceDiagram
+    participant C as Volající
+    participant S as ChargingReservationSystem
+    participant R as ReservationRepository
+    participant P as AllocationPolicy
+    participant N as Notifier
+    C->>S: confirm(user_id, reservation_id)
+    activate S
+    Note over S: with _lock
+    S->>R: get(reservation_id)
+    R-->>S: Reservation (DRAFT)
+    S->>S: role, vlastník, DRAFT, now < start
+    S->>R: relevant_for(reservation)
+    R-->>S: CONFIRMED téže stanice / uživatele
+    S->>P: check(reservation, station, others)
+    P-->>S: AllocationDecision
+    alt allowed
+        S->>S: state = CONFIRMED, _queue_notification(CONFIRMED)
+    else denied
+        S-->>C: ReservationError(code, related), stav beze změny
+    end
+    Note over S: zámek uvolněn
+    S->>N: send(to, subject, body)
+    N-->>S: ok / libovolná výjimka
+    S->>S: notifications += SENT / FAILED
+    S-->>C: Reservation (CONFIRMED)
+    deactivate S
+```
+
+### Important methods / operations
+
+| | `AllocationPolicy.check()` | `ChargingReservationSystem.confirm()` | `_dispatch_notifications()` |
+|---|---|---|---|
+| Responsibility | rozhodnout o alokaci | provést přechod DRAFT → CONFIRMED | doručit připravené e-maily |
+| Input | kandidát, stanice, ostatní rezervace | `user_id`, `reservation_id` | fronta `_outbox` |
+| Output | `AllocationDecision` | `Reservation` | nic |
+| Preconditions | platný interval kandidáta | rezervace existuje | volá se bez drženého zámku |
+| Postconditions | viz kontrakt výše | úspěch: CONFIRMED a jeden e-mail ve frontě; neúspěch: stav i fronta beze změny | fronta prázdná, každý e-mail má v `notifications` záznam SENT nebo FAILED |
+| Side effects | žádné | mění `Reservation.state`, plní `_outbox`, spustí odeslání | volá `Notifier.send()` |
+| Failure behavior | žádné výjimky, porušení vrací jako hodnotu | `ReservationError`: UNAUTHORIZED, UNKNOWN_RESERVATION, INVALID_STATE, TOO_LATE, INACTIVE_STATION, OVERLAP, DAILY_LIMIT | jakákoli výjimka z `send()` → FAILED, k volajícímu nedoběhne |
+
+`approve()` je stejná operace s jinou podmínkou výchozího stavu (Facility admin, PENDING_APPROVAL, vypršení podle BR-06) a volá stejné `_check_allocation()` → `AllocationPolicy.check()`.
+
+### Algorithm / decision logic
+
+```text
+check(candidate, station, others):
+    if not station.active:                         return deny(INACTIVE_STATION)
+    confirmed = [r in others | r.state == CONFIRMED and r.id != candidate.id]
+    overlapping = [r in confirmed | r.station_id == candidate.station_id
+                   and candidate.start < r.end and r.start < candidate.end]      # BR-01, BR-02
+    if overlapping:                                return deny(OVERLAP, ids(overlapping))
+    same_day = [r in confirmed | r.user_id == candidate.user_id
+                and utc_date(r.start) == utc_date(candidate.start)]               # BR-04
+    if same_day:                                   return deny(DAILY_LIMIT, ids(same_day))
+    return allow()
+```
+
+| Stanice v provozu | Překryv s CONFIRMED téže stanice | CONFIRMED vlastníka v ten den | Výsledek |
+|---|---|---|---|
+| ne | libovolně | libovolně | INACTIVE_STATION |
+| ano | ano | libovolně | OVERLAP + id |
+| ano | ne | ano | DAILY_LIMIT + id |
+| ano | ne | ne | allow |
+
+### DD decisions intentionally left to code
+
+- texty chybových hlášek (`ALLOCATION_MESSAGES`) a formát předmětu a těla e-mailu;
+- generování id rezervací (`R0001`, …) a pořadí položek v `related` (pořadí v úložišti);
+- testovací háček `after_checks` pro vynucení souběhu;
+- webová ukázka `app/index.html` má stejná pravidla napsaná znovu v JavaScriptu (driver D5); C05 ji strukturálně neupravuje, shodu chování hlídá diferenciální test.

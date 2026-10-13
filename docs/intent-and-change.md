@@ -1,6 +1,6 @@
 # Project Frame
 
-Rámec z C01 (dokument `docs/SWI-C01-reservation-system.pdf`, kapitola 3 a 4). V C02 se nemění. Specifikace C02 (baseline v0.1, změna a baseline v0.2) je v `README.md`.
+Rámec z C01 (dokument `docs/SWI-C01-reservation-system.pdf`, kapitola 3 a 4). V C02 se nemění. Specifikace C02 (baseline v0.1, změna a baseline v0.2) je v `docs/specification.md`.
 
 ## Reservation domain
 Charging slots on company-owned EV charging stations.
@@ -68,5 +68,5 @@ ponecháno na kontrole v UI.
 
 | Kdy | Změna | Kde je popsaná |
 |---|---|---|
-| C02 | Neznámá z C01 rozhodnuta: při nedostupné Notification Service potvrzení platí a e-mail se zapíše jako nedoručený (REQ-09). | `README.md`, REQ-09 |
-| C02 | Změna: některé stanice vyžadují schválení Facility adminem (stavy PENDING_APPROVAL, REJECTED, EXPIRED, operace Approve / Reject), baseline v0.2. | `README.md`, části Změna C02 a Baseline v0.2 |
+| C02 | Neznámá z C01 rozhodnuta: při nedostupné Notification Service potvrzení platí a e-mail se zapíše jako nedoručený (REQ-09). | `docs/specification.md`, REQ-09 |
+| C02 | Změna: některé stanice vyžadují schválení Facility adminem (stavy PENDING_APPROVAL, REJECTED, EXPIRED, operace Approve / Reject), baseline v0.2. | `docs/specification.md`, části Změna C02 a Baseline v0.2 |

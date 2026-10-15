@@ -1,0 +1,36 @@
+@startuml activity-op03-confirm-v02
+title OP-03 Confirm Reservation (v0.2)
+|Zaměstnanec|
+start
+:požádá o potvrzení rezervace X;
+|Rezervační systém|
+if (zaměstnanec, X existuje, je jeho,\nX je DRAFT a now < start?) then ([ano])
+else ([ne])
+  :UNAUTHORIZED, UNKNOWN_RESERVATION,\nINVALID_STATE nebo TOO_LATE;
+  stop
+endif
+if (stanice vyžaduje schválení? BR-05) then ([ne])
+else ([ano])
+  :X.state = PENDING_APPROVAL;
+  note right
+    stanici neblokuje, e-mail se neposílá;
+    alokace se kontroluje až při schválení (DEC-09)
+  end note
+  |Zaměstnanec|
+  :dostane X ve stavu PENDING_APPROVAL;
+  stop
+endif
+|Rezervační systém|
+if (alokace OK?\nprovoz, BR-02, BR-04) then ([ano])
+else ([ne])
+  :INACTIVE_STATION, OVERLAP\nnebo DAILY_LIMIT, zůstává DRAFT;
+  stop
+endif
+:X.state = CONFIRMED;
+note right: kontrola a zápis jsou jeden nedělitelný krok (REQ-04)
+|Notification Service|
+:e-mail vlastníkovi "potvrzeno";
+|Zaměstnanec|
+:dostane X ve stavu CONFIRMED;
+stop
+@enduml

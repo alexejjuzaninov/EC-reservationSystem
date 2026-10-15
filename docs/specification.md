@@ -292,31 +292,25 @@ Tím je rozhodnuta neznámá z C01: když Notification Service nefunguje, potvrz
 
 ## Diagramy v0.1
 
-### Případy užití v0.1
+Případy užití a diagramy aktivit jsou v notaci UML (PlantUML). Zdrojové soubory `.puml` jsou ve složce `docs/diagrams/` vedle vykreslených `.svg`; po úpravě zdroje se obrázky znovu vykreslí příkazem (z kořene repozitáře):
 
-```mermaid
-flowchart LR
-    emp["«actor»<br/>Zaměstnanec"]
-    adm["«actor»<br/>Facility admin"]
-    subgraph SYS["Rezervační systém nabíjecích stanic"]
-        direction TB
-        UC1(["Vytvořit rezervaci"])
-        UC2(["Zjistit dostupnost"])
-        UC3(["Potvrdit rezervaci"])
-        UC4(["Zrušit rezervaci"])
-    end
-    ns["«external system»<br/>Notification Service"]
-    emp --- UC1
-    emp --- UC2
-    emp --- UC3
-    emp ---|"vlastní"| UC4
-    adm --- UC2
-    adm ---|"kteroukoli"| UC4
-    UC3 -.->|"e-mail"| ns
-    UC4 -.->|"e-mail"| ns
+```powershell
+# Windows (PowerShell)
+docker run --rm -v "${PWD}\docs\diagrams:/data" plantuml/plantuml:1.2026.8 -tsvg -charset UTF-8 "/data/*.puml"
 ```
 
-Hranice systému obsahuje čtyři cíle. Notification Service je skutečný podpůrný systém z hranice C01, ne vymyšlený aktér.
+```bash
+# Linux / macOS
+docker run --rm -v "$PWD/docs/diagrams:/data" plantuml/plantuml:1.2026.8 -tsvg -charset UTF-8 "/data/*.puml"
+```
+
+Stavové diagramy jsou v Mermaid (`stateDiagram-v2`), GitHub je vykresluje přímo v textu.
+
+### Případy užití v0.1
+
+![Případy užití v0.1](diagrams/use-case-v01.svg)
+
+Hranice systému obsahuje čtyři cíle. Notification Service je skutečný podpůrný systém z hranice C01, ne vymyšlený aktér, a v diagramu je vedlejší aktér (`«system»`) napojený na cíle, při kterých posílá e-mail. Zrušit rezervaci smí zaměstnanec jen vlastní, Facility admin kteroukoli (BR-03).
 
 ### Stavový diagram v0.1
 
@@ -333,74 +327,21 @@ stateDiagram-v2
 
 **OP-01 Create Reservation**
 
-```mermaid
-flowchart TD
-    A(["Zaměstnanec zadá stanici a interval"]) --> B{"Je to zaměstnanec?"}
-    B -->|ne| X1["UNAUTHORIZED, nic nevznikne"]
-    B -->|ano| C{"Stanice existuje?"}
-    C -->|ne| X2["UNKNOWN_STATION"]
-    C -->|ano| D{"start < end?"}
-    D -->|ne| X3["INVALID_INTERVAL"]
-    D -->|ano| E{"Délka nejvýše 4 h?"}
-    E -->|ne| X4["INVALID_DURATION"]
-    E -->|ano| F{"Začátek v budoucnosti?"}
-    F -->|ne| X5["START_IN_PAST"]
-    F -->|ano| G["Uložit rezervaci ve stavu DRAFT"]
-    G --> H(["Vrátit id a stav DRAFT"])
-```
+![Aktivita OP-01 Create Reservation](diagrams/activity-op01-create.svg)
 
 **OP-02 Check Availability**
 
-```mermaid
-flowchart TD
-    A(["Dotaz: stanice a interval"]) --> B{"Stanice existuje?"}
-    B -->|ne| X1["UNKNOWN_STATION"]
-    B -->|ano| C{"Interval platný a nejvýše 4 h?"}
-    C -->|ne| X2["INVALID_INTERVAL nebo INVALID_DURATION"]
-    C -->|ano| D{"Stanice v provozu?"}
-    D -->|ne| U(["UNAVAILABLE"])
-    D -->|ano| E{"Překryv s CONFIRMED rezervací?"}
-    E -->|ano| U
-    E -->|ne| V(["AVAILABLE"])
-```
+![Aktivita OP-02 Check Availability](diagrams/activity-op02-check-availability.svg)
+
+Check Availability nemění žádný stav rezervace; DRAFT ani PENDING_APPROVAL stanici neblokují.
 
 **OP-03 Confirm Reservation**
 
-```mermaid
-flowchart TD
-    A(["Vlastník potvrzuje X"]) --> B{"Je to vlastník X?"}
-    B -->|ne| X1["UNAUTHORIZED, beze změny"]
-    B -->|ano| C{"X je DRAFT?"}
-    C -->|ne| X2["INVALID_STATE, beze změny"]
-    C -->|ano| D{"now < start?"}
-    D -->|ne| X3["TOO_LATE, zůstává DRAFT"]
-    D -->|ano| E{"Stanice v provozu?"}
-    E -->|ne| X4["INACTIVE_STATION, zůstává DRAFT"]
-    E -->|ano| F{"Překryv s CONFIRMED? BR-02"}
-    F -->|ano| X5["OVERLAP, zůstává DRAFT"]
-    F -->|ne| G{"Vlastník už má v ten den CONFIRMED? BR-04"}
-    G -->|ano| X6["DAILY_LIMIT, zůstává DRAFT"]
-    G -->|ne| H["Nastavit CONFIRMED jako jeden krok s kontrolou, REQ-04"]
-    H --> I["E-mail přes Notification Service, REQ-09"]
-    I --> J(["Vrátit X ve stavu CONFIRMED"])
-```
+![Aktivita OP-03 Confirm Reservation v0.1](diagrams/activity-op03-confirm-v01.svg)
 
 **OP-04 Cancel Reservation**
 
-```mermaid
-flowchart TD
-    A(["Požadavek na zrušení X"]) --> B{"Vlastník nebo Facility admin?"}
-    B -->|ne| X1["UNAUTHORIZED"]
-    B -->|ano| C{"X už je CANCELLED?"}
-    C -->|ano| I(["Úspěch beze změny, bez e-mailu"])
-    C -->|ne| D{"X je DRAFT nebo CONFIRMED?"}
-    D -->|ne| X2["INVALID_STATE"]
-    D -->|ano| E{"now < start?"}
-    E -->|ne| X3["TOO_LATE, beze změny"]
-    E -->|ano| F["Nastavit CANCELLED, záznam zůstává"]
-    F --> G["E-mail vlastníkovi, REQ-09"]
-    G --> H(["Stanice je v intervalu znovu volná"])
-```
+![Aktivita OP-04 Cancel Reservation](diagrams/activity-op04-cancel.svg)
 
 ### Kontrola konzistence v0.1
 
@@ -554,33 +495,9 @@ REQ-05 nově dovoluje zrušit i PENDING_APPROVAL za stejných podmínek jako DRA
 
 ### Případy užití v0.2
 
-```mermaid
-flowchart LR
-    emp["«actor»<br/>Zaměstnanec"]
-    adm["«actor»<br/>Facility admin"]
-    subgraph SYS["Rezervační systém nabíjecích stanic"]
-        direction TB
-        UC1(["Vytvořit rezervaci"])
-        UC2(["Zjistit dostupnost"])
-        UC3(["Potvrdit rezervaci"])
-        UC4(["Zrušit rezervaci"])
-        UC5(["Schválit rezervaci"])
-        UC6(["Zamítnout rezervaci"])
-    end
-    ns["«external system»<br/>Notification Service"]
-    emp --- UC1
-    emp --- UC2
-    emp --- UC3
-    emp ---|"vlastní"| UC4
-    adm --- UC2
-    adm ---|"kteroukoli"| UC4
-    adm --- UC5
-    adm --- UC6
-    UC3 -.->|"e-mail"| ns
-    UC4 -.->|"e-mail"| ns
-    UC5 -.->|"e-mail"| ns
-    UC6 -.->|"e-mail"| ns
-```
+![Případy užití v0.2](diagrams/use-case-v02.svg)
+
+Nové cíle Schválit a Zamítnout patří Facility adminovi (OP-05). Potvrzení u stanice se schválením (DC-1) je jen žádost DRAFT → PENDING_APPROVAL a e-mail se při něm neposílá.
 
 ### Stavový diagram v0.2
 
@@ -604,35 +521,11 @@ stateDiagram-v2
 
 ### Aktivita Confirm v0.2
 
-```mermaid
-flowchart TD
-    A(["Vlastník potvrzuje X"]) --> B{"Vlastník, X je DRAFT a now < start?"}
-    B -->|ne| X1["UNAUTHORIZED, INVALID_STATE nebo TOO_LATE"]
-    B -->|ano| C{"Stanice vyžaduje schválení? BR-05"}
-    C -->|ano| P["PENDING_APPROVAL, stanici neblokuje"]
-    P --> R1(["Vrátit X: čeká na Facility admina"])
-    C -->|ne| D{"Alokace OK? provoz, BR-02, BR-04"}
-    D -->|ne| X2["INACTIVE_STATION, OVERLAP nebo DAILY_LIMIT, zůstává DRAFT"]
-    D -->|ano| E["CONFIRMED a e-mail"]
-    E --> R2(["Vrátit X ve stavu CONFIRMED"])
-```
+![Aktivita OP-03 Confirm Reservation v0.2](diagrams/activity-op03-confirm-v02.svg)
 
 ### Aktivita Approve / Reject
 
-```mermaid
-flowchart TD
-    A(["Facility admin rozhoduje o X"]) --> B{"Je to Facility admin?"}
-    B -->|ne| X1["UNAUTHORIZED"]
-    B -->|ano| C{"Začátek X už nastal? BR-06"}
-    C -->|ano| X2["X je EXPIRED, rozhodnutí odmítnuto"]
-    C -->|ne| D{"X je PENDING_APPROVAL?"}
-    D -->|ne| X3["INVALID_STATE"]
-    D -->|ano| E{"Rozhodnutí"}
-    E -->|zamítnout| F["REJECTED a e-mail"]
-    E -->|schválit| G{"Alokace OK? provoz, BR-02, BR-04"}
-    G -->|ne| X4["INACTIVE_STATION, OVERLAP nebo DAILY_LIMIT, zůstává PENDING_APPROVAL"]
-    G -->|ano| H["CONFIRMED a e-mail"]
-```
+![Aktivita OP-05 Approve / Reject](diagrams/activity-op05-approve-reject.svg)
 
 ### Kontrola konzistence v0.2
 

@@ -1,0 +1,43 @@
+@startuml activity-op04-cancel
+title OP-04 Cancel Reservation (v0.1; ve v0.2 lze zrušit i PENDING_APPROVAL)
+|Uživatel|
+start
+:požádá o zrušení rezervace X;
+|Rezervační systém|
+if (X existuje?) then ([ano])
+else ([ne])
+  :UNKNOWN_RESERVATION;
+  stop
+endif
+if (zaměstnanec ruší cizí X?) then ([ne])
+else ([ano])
+  :UNAUTHORIZED;
+  stop
+endif
+if (X už je CANCELLED?) then ([ne])
+else ([ano])
+  :úspěch beze změny, bez e-mailu (DEC-06);
+  stop
+endif
+if (X je DRAFT, CONFIRMED\nnebo PENDING_APPROVAL (v0.2)?) then ([ano])
+else ([ne])
+  :INVALID_STATE;
+  stop
+endif
+if (now < start?) then ([ano])
+else ([ne])
+  :TOO_LATE, beze změny;
+  stop
+endif
+:X.state = CANCELLED, záznam zůstává;
+|Notification Service|
+:e-mail vlastníkovi "zrušeno";
+note right
+  výpadek služby: e-mail FAILED,
+  výsledek operace se nemění (REQ-09)
+end note
+|Uživatel|
+:dostane X ve stavu CANCELLED;
+note right: stanice je v intervalu znovu volná
+stop
+@enduml

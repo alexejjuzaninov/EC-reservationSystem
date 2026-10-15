@@ -1,0 +1,46 @@
+@startuml activity-op05-approve-reject
+title OP-05 Approve / Reject Reservation (v0.2)
+|Facility admin|
+start
+:rozhodne o rezervaci X: schválit, nebo zamítnout;
+|Rezervační systém|
+if (uživatel je Facility admin?) then ([ano])
+else ([ne])
+  :UNAUTHORIZED;
+  stop
+endif
+if (X existuje?) then ([ano])
+else ([ne])
+  :UNKNOWN_RESERVATION;
+  stop
+endif
+if (začátek X nastal bez rozhodnutí? BR-06) then ([ne])
+else ([ano])
+  :EXPIRED, rozhodnutí odmítnuto;
+  stop
+endif
+if (X je PENDING_APPROVAL?) then ([ano])
+else ([ne])
+  :INVALID_STATE;
+  stop
+endif
+if (rozhodnutí?) then ([zamítnout])
+  :X.state = REJECTED;
+else ([schválit])
+  if (alokace OK?\nprovoz, BR-02, BR-04) then ([ano])
+  else ([ne])
+    :INACTIVE_STATION, OVERLAP nebo DAILY_LIMIT,\nzůstává PENDING_APPROVAL;
+    stop
+  endif
+  :X.state = CONFIRMED;
+endif
+|Notification Service|
+:e-mail vlastníkovi "potvrzeno" / "zamítnuto";
+note right
+  výpadek služby: e-mail FAILED,
+  výsledek operace se nemění (REQ-09)
+end note
+|Facility admin|
+:dostane X v novém stavu;
+stop
+@enduml

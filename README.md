@@ -3,7 +3,7 @@
 Týmový projekt předmětu SWI, tým **SW-DEV-AJVZMPIA**: Viacheslav Zlobin, Maksym Panfilov, Aleksej Južaninov, Ivan Akulovich.
 Repozitář: <https://github.com/alexejjuzaninov/EC-reservationSystem>
 
-Firemní nabíjecí stanice pro elektromobily jsou omezený zdroj. Zaměstnanec si předem rezervuje časové okno na jedné stanici, aby po příjezdu nemusel čekat. Stanice je **exkluzivní Resource**: v jednom okamžiku ji smí mít potvrzenou nejvýše jedna rezervace.
+Firemní nabíjecí stanice pro elektromobily jsou omezený zdroj. Zaměstnanec si předem rezervuje časové okno na jedné stanici, aby po příjezdu nemusel čekat. Zaměstnanec, který jezdí elektromobilem, je tedy přímo zákazník systému: sám si najde volnou stanici a rezervuje ji. Facility admin rezervace nevytváří, rozhoduje o provozu stanic. Stanice je **exkluzivní Resource**: v jednom okamžiku ji smí mít potvrzenou nejvýše jedna rezervace.
 
 **▶ [Otevřít webovou ukázku](https://alexejjuzaninov.github.io/EC-reservationSystem/app/)**: běží přímo v prohlížeči, nic se neinstaluje. Návod je v [`app/README.md`](app/README.md). Ukázka je artefakt C02: pravidla v ní jsou kopie pravidel z `reservation.py` přepsaná do JavaScriptu (driver D5 pro C03).
 

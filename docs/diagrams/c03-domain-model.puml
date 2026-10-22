@@ -1,0 +1,65 @@
+@startuml c03-domain-model
+title Doménový model (C03 C1, baseline v0.2)
+hide empty methods
+skinparam classAttributeIconSize 0
+
+enum Role {
+  EMPLOYEE
+  ADMIN
+}
+
+class User {
+  email
+  vehicle_type
+}
+
+class ChargingStation {
+  connector_type
+  power_kw
+  location
+  active
+  requires_approval
+}
+
+class Reservation {
+  state : ReservationState
+  created_at
+}
+
+class TimeInterval <<value object>> {
+  start
+  end
+  --
+  [start, end) (BR-01)
+  start < end, nejvýše 4 h (BR-04)
+}
+
+enum ReservationState {
+  DRAFT
+  PENDING_APPROVAL
+  CONFIRMED
+  CANCELLED
+  REJECTED
+  EXPIRED
+}
+
+class Notification {
+  event : CONFIRMED | CANCELLED | REJECTED
+  status : SENT | FAILED
+}
+
+User "1" -- "1" Role : má >
+User "1" -- "0..*" Reservation : vlastní >
+note on link
+  BR-04: nejvýše jedna CONFIRMED
+  rezervace uživatele za den (UTC)
+end note
+ChargingStation "1" -- "0..*" Reservation : rezervuje <
+note on link
+  BR-02: CONFIRMED rezervace
+  téže stanice se nepřekrývají
+end note
+Reservation *-- "1" TimeInterval : interval
+Reservation ..> ReservationState
+Reservation "1" -- "0..*" Notification : vyvolá >
+@enduml

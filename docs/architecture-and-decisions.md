@@ -156,6 +156,60 @@ Další nálezy pro návrh (nálezy 2 a 3): odeslání e-mailu by mělo proběhn
 
 AI posloužila k navigaci v kódu, návrhu trace a první verzi diagramu. Zapsaná tvrzení jsou ověřená v kódu (čísla řádků pro commit `af2723f`), testy `python reservation.py test` (40/40), během `python reservation.py demo` a dvěma runtime pokusy u nálezů 2 a 3.
 
+## C03 Části B–M: architektura
+
+Navazuje na část A. Sledovaný scénář zůstává OP-03 Confirm Reservation (a stejné rozhodnutí o alokaci v OP-05 Approve), baseline v0.2.
+
+### B. Architektonické drivery
+
+Drivery nejsou řešení: říkají, na co musí architektura odpovědět, ne jak.
+
+| ID | Podklad / zdroj | Proč ovlivňuje architekturu | Otázka, kterou musí architektura vyřešit |
+|---|---|---|---|
+| DR1 Souběh | BR-02, BR-04, REQ-04, driver D1 z C02, nález 1 části A, spike C01 (`assert 2 == 1`), pressure R | Dva souběžné požadavky mohou oba vidět „bez konfliktu“. Dnes je chrání `threading.Lock`, který platí jen uvnitř jednoho procesu; nad databází bez dalšího opatření projdou obě potvrzení. Týká se BR-02 (překryv na stanici) i BR-04 (jedna CONFIRMED uživatele za den: dvě stanice, stejný den). | Kde se musí udělat autoritativní rozhodnutí o přechodu do CONFIRMED, aby BR-02 a BR-04 platily i při souběhu a ve více procesech? |
+| DR2 Trvalý stav | C01 Persistent state, driver D2, nález 4 části A | Žádost PENDING_APPROVAL čeká na rozhodnutí Facility admina déle, než trvá požadavek, a musí přežít restart aplikace. Dnes stav zmizí s procesem. | Kdo vlastní trvalý stav rezervace a jak k němu přistupují ostatní části? |
+| DR3 Selhání notifikace | C01 Unknown → REQ-09, driver D4, nálezy 2 a 3 části A | Notification Service je mimo naši kontrolu, může být pomalá nebo nedostupná; změna stavu už může být zapsaná. | Kde je integrace s Notification Service izolovaná, co znamená její selhání pro výsledek operace a kdo vlastní opakované doručení (TBD-02)? |
+| DR4 Čas | BR-06, REQ-08, driver D3 | Přechod PENDING_APPROVAL → EXPIRED nespouští uživatel, ale čas. Dnes se vyhodnotí až při další operaci. | Kdo a kdy provede přechod do EXPIRED? |
+
+Nevybrané kandidáty:
+
+- Driver D5 z C02 (pravidla v `reservation.py` i v `app/index.html`): webová ukázka je zmrazený artefakt C02, pravidla produktu budou na jednom místě. Požadavek jednoho vlastníka pravidla je součástí DR1.
+- Nález 6 části A (identita uživatele): ve specifikaci je to otevřená otázka TBD-01, architekturu pro nerozhodnutý požadavek nenavrhujeme.
+
+### C1. Doménový model
+
+![Doménový model](diagrams/c03-domain-model.svg)
+
+Zdroj: `docs/diagrams/c03-domain-model.puml`. Model obsahuje jen doménové pojmy (žádné controllery, repository ani frameworkové třídy). Invarianty BR-02 a BR-04 jsou u asociací, kterých se týkají: BR-02 omezuje rezervace jedné stanice, BR-04 rezervace jednoho uživatele. Schválení není samostatný pojem: v baseline v0.2 je to stav PENDING_APPROVAL a rozhodnutí Facility admina (OP-05), žádná další data o schválení se neukládají.
+
+### C2. Odpovědnosti systému
+
+Slice: OP-03 Confirm a OP-05 Approve / Reject, včetně vstupu přes HTTP z walking skeletonu.
+
+| # | Zdroj | Odpovědnost | Co musí rozhodovat / vlastnit | Jeden jasný vlastník? | Důvod |
+|---|---|---|---|---|---|
+| R1 | OP-01, OP-03, walking skeleton C01 | přijmout požadavek a validovat jeho tvar | formát vstupu, převod na doménové volání a výsledku na odpověď | ano | jinak se validace rozprostře do více míst |
+| R2 | OP-03, OP-05, BR-03 | ověřit oprávnění žadatele | role a vlastnictví rezervace | ano | různá místa nesmí pustit různé uživatele |
+| R3 | stavový diagram v0.2 | rozhodnout, zda je přechod stavu povolený, a provést ho | životní cyklus rezervace | ano | různé části nesmí rozhodnout o přechodu odlišně |
+| R4 | REQ-03, REQ-06, BR-02, BR-04 | vyhodnotit podmínky alokace (provoz stanice, překryv, denní limit) | pravidla alokace, stejná pro Confirm i Approve | ano | Confirm a Approve musí rozhodovat stejně |
+| R5 | DR1, REQ-04 | zaručit BR-02 a BR-04 i při souběžných požadavcích | atomické rozhodnutí a zápis CONFIRMED | ano | souběh nesmí porušit invariant |
+| R6 | DR2 | trvale uložit a načíst rezervace | trvalý stav rezervací | ano | stav musí přežít požadavek i restart |
+| R7 | DR4, BR-06 | vyhodnotit vypršení čekající žádosti | přechod PENDING_APPROVAL → EXPIRED | ano | rozhodnutí o vypršení nesmí záviset na tom, kdo se zeptá první |
+| R8 | DR3, REQ-09 | doručit notifikaci a zaznamenat výsledek SENT / FAILED | komunikace s Notification Service | podle návrhu | selhání externí služby musí mít definovaný význam |
+
+| # | Seskupit s | Oddělit od | Proč |
+|---|---|---|---|
+| R1 | — | R3, R4 | jiný důvod změny (HTTP, formát JSON) a jiná technologie (framework) |
+| R2 | R3 | R1 | rozhodnutí o oprávnění patří k operaci nad rezervací, ne k formátu požadavku |
+| R3 | R4, R7 | R1, R8 | sdílí stav a invariant rezervace |
+| R4 | R3 | R6 | pravidlo je doménové, nesmí záviset na tom, jak se data ukládají |
+| R5 | R6 | R8 | atomičnost se týká zápisu stavu; nesmí čekat na externí službu |
+| R6 | R5 | R3, R4 | jiná technologie (PostgreSQL, SQLAlchemy) a jiný důvod změny |
+| R7 | R3 | R8 | je to přechod životního cyklu |
+| R8 | — | R3, R5 | jiná hranice selhání (externí systém) a jiná technologie |
+
+R4 a R5 nejsou totéž: R4 říká, *co* pravidlo znamená (stejné vyhodnocení pro Confirm i Approve), R5 říká, *jak se zaručí* i při souběhu. Kde přesně R5 leží, je hlavní rozhodovací otázka (část D).
+
 ## C05 Detailed Design
 
 ### Selected architecture unit

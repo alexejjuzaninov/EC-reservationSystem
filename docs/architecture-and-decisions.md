@@ -299,7 +299,7 @@ Obě alternativy umí požadované chování realizovat. Rozdíl je v tom, co se
 - BR-02 vynucuje EXCLUDE constraint `no_overlapping_confirmed` nad `(station_id, tstzrange(start_time, end_time, '[)'))` pro `state = 'CONFIRMED'`.
 - BR-04 vynucuje unikátní částečný index `one_confirmed_per_user_day` nad `(user_id, ((start_time AT TIME ZONE 'UTC')::date))` pro `state = 'CONFIRMED'`.
 - `AllocationPolicy` zůstává jediným místem, kde je význam pravidel zapsaný v kódu: vrací srozumitelné `INACTIVE_STATION`, `OVERLAP`, `DAILY_LIMIT` v běžném případě a používá ji i Check Availability.
-- Reservation Service převede porušení constraintu podle jeho názvu na stejné kódy `OVERLAP` / `DAILY_LIMIT`; rezervace zůstane v původním stavu.
+- Porušení constraintu převede úložiště (Reservation Store, jediná část, která zná SQL a názvy constraintů) podle názvu na doménovou chybu se stejnými kódy `OVERLAP` / `DAILY_LIMIT`; rezervace zůstane v původním stavu.
 - E-mail se posílá až po `COMMIT`, mimo transakci (DR3).
 
 **Důvod:** Pressure R z C01 znamená, že dvojí rezervace má vysokou cenu (placené stanice, refundace). Invariant ve schématu platí pro každý zápis, včetně cest, které vzniknou později, a nelze ho obejít opomenutím v kódu. Řešení je ověřené: spike C01 (`4 passed`, testy při odebraném constraintu selžou) a test indexu pro BR-04 v části E2. Odpadá ruční zamykání a hlídání pořadí zámků.
@@ -309,7 +309,7 @@ Obě alternativy umí požadované chování realizovat. Rozdíl je v tom, co se
 - Pravidla BR-02 a BR-04 jsou na dvou místech (`AllocationPolicy` a schéma). Shodu musí hlídat testy: stejné hraniční případy (navazující interval, překryv, den v UTC) musí odmítnout policy i databáze.
 - Změna pravidla znamená změnu kódu i migraci schématu.
 - Vazba na PostgreSQL (`btree_gist`, `tstzrange`, `AT TIME ZONE`).
-- Prohraný souběžný požadavek se o konfliktu dozví až při zápisu; service musí rozpoznat constraint podle názvu, jinak by volající dostal obecnou chybu databáze.
+- Prohraný souběžný požadavek se o konfliktu dozví až při zápisu; úložiště musí rozpoznat constraint podle názvu, jinak by volající dostal obecnou chybu databáze.
 
 **Rozhodnutí znovu otevřeme, když:**
 
@@ -317,6 +317,50 @@ Obě alternativy umí požadované chování realizovat. Rozdíl je v tom, co se
 - se změní definice dne pro BR-04 (TBD-04, místní čas místo UTC) a index by ji nedokázal vyjádřit;
 - bude potřeba jiná databáze než PostgreSQL;
 - měření ukáže, že konflikty při zápisu jsou častý výsledek a uživatelé dostávají chybu místo srozumitelné odpovědi.
+
+### G1. Kontext systému
+
+![Kontext systému](diagrams/c03-context.svg)
+
+Kolem systému jsou jen skuteční aktéři a jediný externí systém z hranice C01. PostgreSQL je součást našeho systému (vlastníme schéma i data), proto v kontextu není. IdP chybí záměrně: identita je otevřená otázka TBD-01. Webová ukázka na GitHub Pages není součástí systému, je to samostatný artefakt C02.
+
+### G2. TO-BE statická architektura
+
+![TO-BE statická architektura](diagrams/c03-components.svg)
+
+| Prvek | Hlavní odpovědnost | Odpovědnosti z C2 | owns |
+|---|---|---|---|
+| Reservation API | přijmout HTTP požadavek, validovat tvar vstupu, vrátit odpověď | R1 | — |
+| Reservation Management | oprávnění, rozhodnutí o přechodech stavu, vypršení žádostí, spuštění notifikace | R2, R3, R7 | životní cyklus rezervace |
+| Allocation Policy | vyhodnotit provoz stanice, BR-02 a BR-04 | R4 | — (čistá funkce) |
+| Reservation Store | uložit a načíst rezervace, převést porušení constraintu na doménovou chybu | R5, R6 | trvalý stav rezervací, invarianty BR-02 a BR-04 ve schématu |
+| Notification Integration | doručit e-mail, zaznamenat SENT / FAILED | R8 | log notifikací |
+
+Povolené závislosti jsou jen ty v diagramu: API → Management; Management → Policy, `ReservationRepository`, `Notifier`; Store → PostgreSQL; Notification Integration → Notification Service. Allocation Policy nezávisí na ničem. Rozhodnutí ADR-01 je vidět u Reservation Store a PostgreSQL: invarianty vlastní úložiště a databáze, ne Allocation Policy.
+
+### G3. Vlastnictví přechodů ve stavovém diagramu
+
+Stavový diagram v0.2 je v `docs/specification.md`, část Diagramy v0.2.
+
+| Přechod | Vlastník rozhodnutí | Kdo přechod jen vyžádá |
+|---|---|---|
+| [žádný] → DRAFT | Reservation Management | Zaměstnanec přes Reservation API |
+| DRAFT → CONFIRMED | Reservation Management (podmínky vyhodnotí Allocation Policy, invariant zaručí schéma v Reservation Store, ADR-01) | Zaměstnanec přes Reservation API |
+| DRAFT → PENDING_APPROVAL | Reservation Management | Zaměstnanec přes Reservation API |
+| PENDING_APPROVAL → CONFIRMED | Reservation Management (stejně jako Confirm) | Facility admin přes Reservation API |
+| PENDING_APPROVAL → REJECTED | Reservation Management | Facility admin přes Reservation API |
+| PENDING_APPROVAL → EXPIRED | Reservation Management, na začátku každé operace | nikdo: spouští ho čas (DR4) |
+| DRAFT / PENDING_APPROVAL / CONFIRMED → CANCELLED | Reservation Management | Zaměstnanec (jen vlastní) nebo Facility admin (kteroukoli) přes Reservation API |
+
+Databáze přechod nerozhoduje, jen ho může vetovat: zápis CONFIRMED, který by porušil BR-02 nebo BR-04, odmítne a Reservation Management ho vrátí jako `OVERLAP` / `DAILY_LIMIT`.
+
+Vypršení zůstává líné (DR4): Reservation Management ho vyhodnotí na začátku každé operace, stejně jako v C02. Plánovač by přidal další runtime prvek, ale business výsledek nezmění: žádost, o které nikdo nerozhodl do začátku, nelze schválit ani potvrdit. Plánovač bude potřeba až pro e-mail o vypršení (TBD-02).
+
+### G4. Runtime / deployment mapping
+
+![Runtime / deployment mapping](diagrams/c03-deployment.svg)
+
+Všech pět logických prvků běží v jednom procesu (FastAPI pod uvicorn). PostgreSQL 16 běží v Docker kontejneru `swi-db`, stejně jako ve spike C01. Notification Service je externí systém; skutečná služba neexistuje, proto ji walking skeleton zastupuje náhradní implementací rozhraní `Notifier` (stejně jako `NotificationService` v C02).
 
 ## C05 Detailed Design
 

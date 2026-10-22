@@ -1,0 +1,33 @@
+@startuml c03-deployment
+title Runtime / deployment mapping (C03 G4)
+
+node "Počítač (vývoj, CP1)" {
+  node "Proces aplikace\n<<uvicorn, Python 3.12>>" as APP {
+    artifact ART [
+      FastAPI aplikace (src/)
+      ----
+      Reservation API
+      Reservation Management
+      Allocation Policy
+      Reservation Store
+      Notification Integration
+    ]
+  }
+  node "Docker kontejner swi-db" {
+    database "PostgreSQL 16" as DB
+  }
+}
+node "HTTP klient\n(pytest, curl, prohlížeč)" as CLIENT
+node "Notification Service\n<<externí systém>>" as NS
+
+CLIENT --> APP : HTTP (JSON)
+APP --> DB : SQL (psycopg), port 5432
+APP --> NS : e-mail
+
+note bottom of NS
+  ve walking skeletonu ji zastupuje
+  náhradní implementace rozhraní Notifier
+  v procesu aplikace (skutečná služba
+  neexistuje, stejně jako v C02)
+end note
+@enduml

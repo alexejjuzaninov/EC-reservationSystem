@@ -1,0 +1,16 @@
+@startuml c03-context
+title Kontext systému (C03 G1)
+left to right direction
+skinparam rectangle {
+  BorderThickness 2
+}
+
+actor "Zaměstnanec" as emp
+actor "Facility admin" as adm
+rectangle "Rezervační systém\nnabíjecích stanic" as SYS
+rectangle "Notification Service\n<<externí systém>>" as NS
+
+emp --> SYS : vytvořit / zjistit dostupnost /\npotvrdit / zrušit rezervaci (HTTP)
+adm --> SYS : schválit / zamítnout / zrušit\nrezervaci, zjistit dostupnost (HTTP)
+SYS --> NS : e-mail vlastníkovi:\npotvrzeno / zrušeno / zamítnuto
+@enduml

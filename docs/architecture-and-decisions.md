@@ -362,6 +362,26 @@ Vypršení zůstává líné (DR4): Reservation Management ho vyhodnotí na zač
 
 Všech pět logických prvků běží v jednom procesu (FastAPI pod uvicorn). PostgreSQL 16 běží v Docker kontejneru `swi-db`, stejně jako ve spike C01. Notification Service je externí systém; skutečná služba neexistuje, proto ji walking skeleton zastupuje náhradní implementací rozhraní `Notifier` (stejně jako `NotificationService` v C02).
 
+### H1. Návrhový sekvenční diagram: OP-03 Confirm Reservation
+
+![Návrhový sekvenční diagram Confirm](diagrams/c03-sequence-confirm.svg)
+
+Stejný scénář jako v části A (Confirm na stanici bez schválení), teď v TO-BE architektuře. Vnější `alt` je sekvenční konflikt, který odhalí Allocation Policy. Vnitřní `alt` je souběh z DR1: Allocation Policy konflikt neviděla, protože druhé potvrzení ještě nebylo zapsané, a zápis odmítne až PostgreSQL (ADR-01). Volající dostane v obou případech stejnou odpověď `409` se stejným kódem. E-mail se posílá až po úspěšném `COMMIT`.
+
+### H2. Zaměřený návrhový třídní diagram
+
+![Návrhový třídní diagram](diagrams/c03-design-classes.svg)
+
+| Zpráva z H1 | Vlastník v H2 | Prvek z G2 |
+|---|---|---|
+| 1, 11, 21, 26 HTTP požadavek a odpověď | `reservations_api.confirm_endpoint()` | Reservation API |
+| 2, 5 confirm, kontroly oprávnění, stavu a času, vypršení | `ReservationService.confirm()`, `expire_overdue()` | Reservation Management |
+| 3, 6, 13 get / station / relevant_for / save | rozhraní `ReservationRepository`, implementace `SqlReservationRepository` | Reservation Store |
+| 8, 9, 12 check → deny / allow | `AllocationPolicy.check()` → `AllocationDecision` | Allocation Policy |
+| 22–24 porušení constraintu → `AllocationConflict` | `SqlReservationRepository.translate()` | Reservation Store |
+| 10, 25 chyba s kódem | `ReservationError` (a podtřída `AllocationConflict`) | Reservation Management |
+| 17–19 e-mail a záznam SENT / FAILED | rozhraní `Notifier`, implementace `NotificationIntegration` | Notification Integration |
+
 ## C05 Detailed Design
 
 ### Selected architecture unit

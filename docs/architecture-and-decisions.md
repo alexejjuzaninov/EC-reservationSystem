@@ -282,6 +282,42 @@ Scénář OP-03 Confirm z C02 s komplikací souběhu (REQ-04): Bob potvrzuje X =
 
 Obě alternativy umí požadované chování realizovat. Rozdíl je v tom, co se stane, když se v kódu na něco zapomene: v A invariant tiše přestane platit, v B zápis selže.
 
+### F. ADR-01: Kde se dělá autoritativní rozhodnutí o CONFIRMED
+
+**Stav:** přijato týmem (Viacheslav Zlobin, Maksym Panfilov, Aleksej Južaninov, Ivan Akulovich).
+
+**Kontext:** Aplikace C02 chrání BR-02 a BR-04 zámkem `threading.Lock` v jednom procesu nad daty v paměti. Walking skeleton pro CP1 přesouvá stav do PostgreSQL a aplikace může běžet ve více procesech. Spike C01 ukázal, že kontrola v aplikaci bez dalšího opatření pustí dvě souběžná konfliktní potvrzení (`assert 2 == 1`).
+
+**Drivery:** DR1 (hlavní), DR2, DR3.
+
+**Alternativa A:** aplikace v transakci zamkne řádek stanice a uživatele (`SELECT … FOR UPDATE`), vyhodnotí pravidla a zapíše. Pravidla jen v Pythonu.
+
+**Alternativa B:** invarianty jsou ve schématu PostgreSQL; aplikace pravidla vyhodnocuje kvůli srozumitelné chybě, poslední slovo má databáze.
+
+**Rozhodnutí:** alternativa B.
+
+- BR-02 vynucuje EXCLUDE constraint `no_overlapping_confirmed` nad `(station_id, tstzrange(start_time, end_time, '[)'))` pro `state = 'CONFIRMED'`.
+- BR-04 vynucuje unikátní částečný index `one_confirmed_per_user_day` nad `(user_id, ((start_time AT TIME ZONE 'UTC')::date))` pro `state = 'CONFIRMED'`.
+- `AllocationPolicy` zůstává jediným místem, kde je význam pravidel zapsaný v kódu: vrací srozumitelné `INACTIVE_STATION`, `OVERLAP`, `DAILY_LIMIT` v běžném případě a používá ji i Check Availability.
+- Reservation Service převede porušení constraintu podle jeho názvu na stejné kódy `OVERLAP` / `DAILY_LIMIT`; rezervace zůstane v původním stavu.
+- E-mail se posílá až po `COMMIT`, mimo transakci (DR3).
+
+**Důvod:** Pressure R z C01 znamená, že dvojí rezervace má vysokou cenu (placené stanice, refundace). Invariant ve schématu platí pro každý zápis, včetně cest, které vzniknou později, a nelze ho obejít opomenutím v kódu. Řešení je ověřené: spike C01 (`4 passed`, testy při odebraném constraintu selžou) a test indexu pro BR-04 v části E2. Odpadá ruční zamykání a hlídání pořadí zámků.
+
+**Přijaté negativní důsledky:**
+
+- Pravidla BR-02 a BR-04 jsou na dvou místech (`AllocationPolicy` a schéma). Shodu musí hlídat testy: stejné hraniční případy (navazující interval, překryv, den v UTC) musí odmítnout policy i databáze.
+- Změna pravidla znamená změnu kódu i migraci schématu.
+- Vazba na PostgreSQL (`btree_gist`, `tstzrange`, `AT TIME ZONE`).
+- Prohraný souběžný požadavek se o konfliktu dozví až při zápisu; service musí rozpoznat constraint podle názvu, jinak by volající dostal obecnou chybu databáze.
+
+**Rozhodnutí znovu otevřeme, když:**
+
+- stanice bude moci obsloužit více vozidel najednou (kapacita > 1), což EXCLUDE constraint nevyjádří;
+- se změní definice dne pro BR-04 (TBD-04, místní čas místo UTC) a index by ji nedokázal vyjádřit;
+- bude potřeba jiná databáze než PostgreSQL;
+- měření ukáže, že konflikty při zápisu jsou častý výsledek a uživatelé dostávají chybu místo srozumitelné odpovědi.
+
 ## C05 Detailed Design
 
 ### Selected architecture unit

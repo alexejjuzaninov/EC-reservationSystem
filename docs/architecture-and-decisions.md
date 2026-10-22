@@ -298,7 +298,7 @@ Obě alternativy umí požadované chování realizovat. Rozdíl je v tom, co se
 
 - BR-02 vynucuje EXCLUDE constraint `no_overlapping_confirmed` nad `(station_id, tstzrange(start_time, end_time, '[)'))` pro `state = 'CONFIRMED'`.
 - BR-04 vynucuje unikátní částečný index `one_confirmed_per_user_day` nad `(user_id, ((start_time AT TIME ZONE 'UTC')::date))` pro `state = 'CONFIRMED'`.
-- `AllocationPolicy` zůstává jediným místem, kde je význam pravidel zapsaný v kódu: vrací srozumitelné `INACTIVE_STATION`, `OVERLAP`, `DAILY_LIMIT` v běžném případě a používá ji i Check Availability.
+- `AllocationPolicy` zůstává jediným místem, kde je význam pravidel zapsaný v kódu: vrací srozumitelné `INACTIVE_STATION`, `OVERLAP`, `DAILY_LIMIT` v běžném případě. Check Availability z ní používá jen provoz stanice a stejnou definici překryvu (BR-01, BR-02), ne BR-04: dostupnost se týká stanice, ne uživatele (REQ-02).
 - Porušení constraintu převede úložiště (Reservation Store, jediná část, která zná SQL a názvy constraintů) podle názvu na doménovou chybu se stejnými kódy `OVERLAP` / `DAILY_LIMIT`; rezervace zůstane v původním stavu.
 - E-mail se posílá až po `COMMIT`, mimo transakci (DR3).
 
@@ -381,6 +381,45 @@ Stejný scénář jako v části A (Confirm na stanici bez schválení), teď v 
 | 22–24 porušení constraintu → `AllocationConflict` | `SqlReservationRepository.translate()` | Reservation Store |
 | 10, 25 chyba s kódem | `ReservationError` (a podtřída `AllocationConflict`) | Reservation Management |
 | 17–19 e-mail a záznam SENT / FAILED | rozhraní `Notifier`, implementace `NotificationIntegration` | Notification Integration |
+
+### I. Cross-view kontrola
+
+Provedena před změnou kódu.
+
+| Kontrola | Otázka | Výsledek |
+|---|---|---|
+| C02 ↔ G2 | Umí architektura realizovat požadované chování a pravidla? | Ano: všech pět operací vede API → Reservation Management, BR-02 a BR-04 drží Allocation Policy a schéma (ADR-01), REQ-09 Notification Integration, BR-06 Reservation Management. **Nalezen rozpor 1** (níže). |
+| C2 ↔ G2 | Má každá významná odpovědnost jednoho vlastníka? | Ano: R1 API; R2, R3, R7 Reservation Management; R4 Allocation Policy; R5, R6 Reservation Store; R8 Notification Integration. |
+| G2 ↔ H1 | Používá sekvence jen existující a povolené závislosti? | Ano: API → Management → Policy / Store / Notification Integration, Store → PostgreSQL, Notification Integration → Notification Service. Žádná zpráva nejde mimo závislosti z G2. |
+| H1 ↔ H2 | Má každá významná zpráva strukturálního vlastníka? | **Nalezen rozpor 2** (níže), po opravě ano: tabulka v H2. |
+| stavový diagram ↔ G3 / H1 | Rozhoduje přechod správný vlastník? | Ano: stavový diagram v0.2 má 9 přechodů, G3 má vlastníka pro všech 9 (vždy Reservation Management); H1 provádí DRAFT → CONFIRMED v Reservation Management. |
+| G2 ↔ G4 | Je každý logický prvek realisticky namapovaný do runtime? | Ano: všech pět prvků v jednom procesu FastAPI, PostgreSQL v kontejneru, Notification Service mimo (ve skeletonu náhradní implementace). |
+| ADR ↔ G2 / G4 | Je rozhodnutí vidět v architektuře? | Ano: invarianty jsou u Reservation Store a PostgreSQL v G2, vlastnictví v G3 („databáze jen vetuje“), PostgreSQL 16 v G4 (`btree_gist` je v PostgreSQL 13+ důvěryhodné rozšíření, vlastník databáze ho smí vytvořit). |
+
+Nalezené rozpory a jejich oprava (v artefaktech, ne v kódu):
+
+| # | Rozpor | Kde | Oprava |
+|---|---|---|---|
+| 1 | ADR-01 tvrdil, že Check Availability používá `AllocationPolicy`. Její `check()` ale zahrnuje i BR-04 (denní limit uživatele), takže by stanice vypadala obsazená jen proto, že tazatel už má v ten den rezervaci. To odporuje REQ-02 (dostupnost stanice). | ADR-01 ↔ specifikace C02 | ADR-01 upřesněn: Check Availability používá jen provoz stanice a definici překryvu (BR-01, BR-02), ne BR-04. |
+| 2 | Lifeline Notification Integration v H1 zapisuje SENT / FAILED, ale v H2 bylo jen rozhraní `Notifier` bez třídy, která by záznam vlastnila. | H1 ↔ H2 | do H2 doplněna třída `NotificationIntegration` implementující `Notifier`. |
+
+### J. AS-IS → TO-BE delta
+
+AS-IS je aplikace C02 `reservation.py` ve stavu po C05 (tag `c05-detailed-design`), TO-BE jsou pohledy G a H.
+
+| Oblast | AS-IS | TO-BE | Akce |
+|---|---|---|---|
+| vstup do systému | volání metod z `demo()` a testů, HTTP neexistuje | Reservation API (FastAPI): `POST /reservations` (walking skeleton C01) a endpointy ostatních operací | CHANGE |
+| trvalý stav | `InMemoryReservationRepository`: slovník v paměti, změna stavu = změna objektu | `SqlReservationRepository` nad PostgreSQL; změna stavu se zapisuje přes `save()` | CHANGE |
+| kontrakt úložiště | `ReservationRepository` (Protocol): `get`, `add`, `all`, `relevant_for` | stejný kontrakt + `save()` a `station()` | CHANGE |
+| BR-02 a BR-04 při souběhu | `threading.Lock` kolem každé operace | EXCLUDE constraint a unikátní index (ADR-01); zámek v procesu odpadá | CHANGE |
+| porušení invariantu při zápisu | nemůže nastat (zámek) | `SqlReservationRepository` převede porušení constraintu na `AllocationConflict` | CHANGE |
+| vyhodnocení pravidel | `AllocationPolicy.check()`: čistá funkce, pevné pořadí kontrol (C05) | stejná | KEEP (přesun do `src/`, logika beze změny) |
+| životní cyklus a oprávnění | metody `ChargingReservationSystem` | `ReservationService` se stejnými kontrolami a kódy chyb | CHANGE (struktura), logika beze změny |
+| vypršení žádosti (BR-06) | líně na začátku každé operace | stejně (G3) | KEEP |
+| notifikace | e-mail se připraví pod zámkem, odešle po něm; jakákoli chyba → FAILED | `NotificationIntegration` za rozhraním `Notifier`, odeslání až po `COMMIT` | KEEP chování, VERIFY „až po COMMIT“ testem |
+| závislost na databázi | žádná | SQLAlchemy / psycopg jen v Reservation Store | VERIFY (architektonické pravidlo, část L2) |
+| aplikace C02 `reservation.py` a webová ukázka | běžící aplikace C02 | zmrazené artefakty C02 (tag `c02-baseline-v0.2`), evidence C02 a C05 na ně odkazuje | KEEP |
 
 ## C05 Detailed Design
 

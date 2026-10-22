@@ -1,7 +1,7 @@
 """Rezervace nabíjecích stanic pro elektromobily: běžící aplikace C02 (Specification Baseline v0.2).
 
 Doména, aktéři a pravidla jsou z C01 (docs/intent-and-change.md): firemní nabíjecí stanice,
-zaměstnanci, Facility admin a externí Notification Service. Specifikace je v README.md.
+zaměstnanci, Facility admin a externí Notification Service. Specifikace je v docs/specification.md.
 
 Architektura je záměrně jednoduchá: jeden modul, data jen v paměti, jeden zámek pro všechny
 operace. Přidělení stanice (Confirm, Approve) je od C05 navržené jako samostatná jednotka:

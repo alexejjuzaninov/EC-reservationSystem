@@ -14,7 +14,7 @@ stays comparable to other teams.
 
 ## C02: výchozí stav pro C03
 
-Aplikace C02 (`reservation.py`) je záměrně jednoduchá: jeden modul, data jen v paměti, jeden zámek pro všechny operace. Webová ukázka `app/index.html` obsahuje stejná pravidla přepsaná do JavaScriptu. Architektonické drivery D1 až D5, které z C02 vyplynuly, jsou v `README.md` a v `docs/evidence-and-evolution.md`. Architektura z C03 se doplní sem.
+Aplikace C02 (`reservation.py`) je záměrně jednoduchá: jeden modul, data jen v paměti, jeden zámek pro všechny operace. Webová ukázka `app/index.html` obsahuje stejná pravidla přepsaná do JavaScriptu. Architektonické drivery D1 až D5, které z C02 vyplynuly, jsou v `docs/specification.md` (část Dopad změny C02) a v `docs/evidence-and-evolution.md`. Architektura z C03 se doplní sem.
 
 ## C03 Část A: AS-IS realizace scénáře Confirm Reservation
 
@@ -62,7 +62,7 @@ Nálezy, kde se implementace liší od v0.2 nebo od C01:
 | 2 | C01: Notification Service „může být pomalá“; REQ-09: e-mail nesmí určovat výsledek | `send()` se volá uvnitř zámku, pomalá služba zdrží všechny operace | runtime: při `send()` trvajícím 2 s čekala `check_availability` na jiné stanici 1,90 s |
 | 3 | REQ-09: výpadek služby nezmění výsledek a nedoručený e-mail se zapíše | ošetřena jen `NotificationUnavailable`; jiná chyba (např. `TimeoutError`) projde k volajícímu, i když rezervace už je CONFIRMED, a do `notifications` se nic nezapíše | runtime: volající dostal `TimeoutError`, stav `CONFIRMED`, 0 záznamů; `reservation.py:358–361` |
 | 4 | C01 Persistent state, driver D2 | stav není trvalý: po skončení procesu zmizí | `reservation.py:143`; každý běh `demo` začíná znovu od R0001 |
-| 5 | jedno místo pro pravidlo (pressure R z C01) | pravidla jsou ještě jednou v JavaScriptu v `app/index.html` | `app/index.html` `confirm()` a `_checkAllocation()`; shodu hlídá jen diferenciální test |
+| 5 | jedno místo pro pravidlo (pressure R z C01) | pravidla jsou ještě jednou v JavaScriptu v `app/index.html` | `app/index.html` `confirm()` a `_checkAllocation()`; shodu automaticky nic nehlídá |
 | 6 | identita uživatele (TBD-01) | `user_id` je obyčejný řetězec od volajícího, nic ho neověřuje | `reservation.py:198`, `:371` |
 
 ### A4. Hlavní části implementace
@@ -360,4 +360,4 @@ check(candidate, station, others):
 - texty chybových hlášek (`ALLOCATION_MESSAGES`) a formát předmětu a těla e-mailu;
 - generování id rezervací (`R0001`, …) a pořadí položek v `related` (pořadí v úložišti);
 - testovací háček `after_checks` pro vynucení souběhu;
-- webová ukázka `app/index.html` má stejná pravidla napsaná znovu v JavaScriptu (driver D5); C05 ji strukturálně neupravuje, shodu chování hlídá diferenciální test.
+- webová ukázka `app/index.html` má stejná pravidla napsaná znovu v JavaScriptu (driver D5); C05 ji strukturálně neupravuje a shodu chování automaticky nic nehlídá.

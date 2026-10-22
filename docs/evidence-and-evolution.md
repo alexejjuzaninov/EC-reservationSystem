@@ -2,14 +2,34 @@
 
 ## C01 Engineering Spike
 
-Kód spike je ve složce `spike/`, scénář a výstup pytest jsou v `README.md`, část Engineering spike.
+Kód spike je ve složce `spike/`, postup spuštění je v `README.md`, část Rychlý start.
 
 | Položka | Obsah |
 |---|---|
-| Question / unknown | Dokáže datová vrstva spolehlivě vynutit pravidlo o nepřekrývajících se CONFIRMED rezervacích, nebo se dvě souběžná potvrzení mohou prosadit obě? |
-| What we did | PostgreSQL v Dockeru, entity a service vrstva, test se dvěma překrývajícími se a jednou navazující rezervací a test souběhu se dvěma vlákny; spuštěno přes pytest |
-| Observed result | sekvenčně: překryv odmítnut, navazující rezervace potvrzena, stav po novém načtení trvá (1 passed); souběžně: obě potvrzení projdou (`assert 2 == 1`, test označen xfail) |
-| Decision / what changes | kontrolu v service vrstvě necháváme jako čitelnou validaci; aby pravidlo platilo i při souběhu, dostane CP1 záruku na úrovni databáze (EXCLUDE constraint nad `tstzrange`, nebo zámek stanice v transakci); návrh v C03; souvisí s pressure R |
+| Question / unknown | Udrží kontrola překryvu v service vrstvě pravidlo BR-02 (potvrzené rezervace téže stanice se nepřekrývají), i když dvě potvrzení proběhnou souběžně? |
+| What we did | PostgreSQL 16 v Dockeru, entity v SQLAlchemy a service vrstva s kontrolou překryvu. `test_overlap.py` ověří sekvenční případ a perzistenci po novém načtení v jiné session. `test_concurrency_risk.py` pustí dvě potvrzení překrývajících se rezervací ve dvou vláknech a bariérou zajistí, že obě dokončí kontrolu překryvu dřív, než kterékoli zapíše. Spuštěno přes pytest. |
+| Observed result | Sekvenčně: překryv odmítnut, navazující rezervace potvrzena, stav po novém načtení trvá. Souběžně: obě rezervace skončí CONFIRMED (`AssertionError: assert 2 == 1`). Kontrola v aplikaci pravidlo při souběhu neudrží, protože databáze sama žádné omezení nemá. |
+| Decision / what changes | BR-02 vynucuje databáze: EXCLUDE constraint `no_overlapping_confirmed` nad `(station_id, tstzrange(start_time, end_time, '[)'))` pro řádky ve stavu CONFIRMED. Kontrola v service vrstvě zůstává kvůli srozumitelné chybě v běžném případě; porušení constraintu service převede na `OverlapError`. Stejné řešení převezme walking skeleton pro CP1, v C03 ho zdůvodní ADR. Souvisí s pressure R. |
+
+### Ověření po změně (commit `238e8ce`)
+
+Prostředí: Windows 11, Python 3.12.8, PostgreSQL 16 (`postgres:16` v Dockeru), SQLAlchemy 2.1.6, psycopg 3.3.6, pytest 9.1.1.
+
+```text
+$ python -m pytest -v        (ve složce spike/)
+tests/test_concurrency_risk.py::test_two_concurrent_confirmations_cannot_both_succeed PASSED [ 25%]
+tests/test_db_constraint.py::test_database_rejects_overlapping_confirmed_rows_even_without_service PASSED [ 50%]
+tests/test_db_constraint.py::test_database_allows_adjacent_confirmed_and_overlapping_drafts PASSED [ 75%]
+tests/test_overlap.py::test_overlapping_confirmation_is_rejected_and_state_persists PASSED [100%]
+============================== 4 passed in 0.30s ==============================
+```
+
+Kontrola, že testy pravidlo skutečně ověřují: v dočasné kopii `spike/` jsme kód záměrně pokazili a spustili stejné testy (repozitář beze změny).
+
+| Úprava kódu | Výsledek | Co z toho plyne |
+|---|---|---|
+| bez EXCLUDE constraintu | 2 failed: `test_two_concurrent_confirmations…` (`assert 2 == 1`), `test_database_rejects_overlapping…` (`DID NOT RAISE IntegrityError`) | testy odhalí chybějící ochranu při souběhu i na úrovni DB |
+| constraint s uzavřeným intervalem `'[]'` místo `'[)'` | 2 failed: `test_database_allows_adjacent…` a `test_overlapping_confirmation…` (`ExclusionViolation` u navazující rezervace) | testy odhalí příliš přísné pravidlo, které by porušilo BR-01 (navazující časy jsou povolené) |
 
 ## Evidence C02: specifikace → běžící aplikace
 

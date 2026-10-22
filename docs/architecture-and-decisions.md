@@ -210,6 +210,78 @@ Slice: OP-03 Confirm a OP-05 Approve / Reject, včetně vstupu přes HTTP z walk
 
 R4 a R5 nejsou totéž: R4 říká, *co* pravidlo znamená (stejné vyhodnocení pro Confirm i Approve), R5 říká, *jak se zaručí* i při souběhu. Kde přesně R5 leží, je hlavní rozhodovací otázka (část D).
 
+### D. Rozhodovací otázka
+
+**Kde se musí udělat autoritativní rozhodnutí o přechodu do CONFIRMED, aby BR-02 a BR-04 platily i při souběžných požadavcích a ve více procesech aplikace?**
+
+Vychází z DR1, ovlivňuje vlastnictví pravidla (R4, R5), interakci aplikace s databází i chování při souběhu a má dvě reálná řešení.
+
+### E1. Alternativy
+
+V obou alternativách běží aplikace jako jeden FastAPI deployable nad PostgreSQL a `AllocationPolicy` dál vyhodnocuje pravidla kvůli srozumitelné chybě. Liší se tím, **kdo má poslední slovo**.
+
+#### Alternativa A: rozhoduje aplikace pod zámkem v databázi
+
+```text
+[Reservation Service] --BEGIN; SELECT stanice a uživatel FOR UPDATE-->  [PostgreSQL]
+        |                                                                řádky jen zamyká,
+        | check(): provoz, BR-02, BR-04                                  pravidla nezná
+        v
+   UPDATE state = CONFIRMED; COMMIT  (zámky se uvolní)
+```
+
+Pravidla jsou jen v Pythonu. Souběžné požadavky na stejnou stanici nebo stejného uživatele se seřadí na zámcích řádků a každý další už vidí výsledek předchozího.
+
+#### Alternativa B: rozhoduje databáze (invarianty ve schématu)
+
+```text
+[Reservation Service] --check() kvůli srozumitelné chybě-->  [AllocationPolicy]
+        |
+        | UPDATE state = CONFIRMED; COMMIT
+        v
+[PostgreSQL]  EXCLUDE (station_id =, tstzrange(start, end, '[)') &&) WHERE state = 'CONFIRMED'   (BR-02)
+              UNIQUE (user_id, den startu v UTC) WHERE state = 'CONFIRMED'                       (BR-04)
+        |
+        | porušení → IntegrityError → service ho převede na OVERLAP / DAILY_LIMIT
+```
+
+Pravidla platí ve schématu databáze bez ohledu na to, která část kódu zapisuje.
+
+### E2. Porovnání vůči driverům
+
+| Driver / kritérium | Alternativa A (aplikace + FOR UPDATE) | Alternativa B (invariant v DB) |
+|---|---|---|
+| DR1 souběh: BR-02 | platí, pokud **každá** cesta, která zapisuje CONFIRMED (Confirm, Approve, budoucí endpointy, skripty), zamkne řádek stanice; zapomenutá cesta invariant poruší a nic to nezastaví | platí pro každý zápis do tabulky včetně cest, které vzniknou později, a přímého SQL; ověřeno ve spike C01 (`test_database_rejects_overlapping_confirmed_rows_even_without_service`) |
+| DR1 souběh: BR-04 | nutné zamknout i řádek uživatele, a to vždy ve stejném pořadí jako stanici (jinak hrozí deadlock); dvě stanice + stejný uživatel se seřadí na řádku uživatele | potřebuje druhý constraint: unikátní částečný index `(user_id, ((start_time AT TIME ZONE 'UTC')::date)) WHERE state = 'CONFIRMED'`; ověřeno v PostgreSQL 16 (viz pod tabulkou) |
+| vlastnictví a změna pravidla (R4) | pravidlo na jednom místě (Python); změna, např. dvě rezervace za den, je jen změna kódu | pravidlo na dvou místech: význam v `AllocationPolicy`, záruka ve schématu; změna pravidla = změna kódu i migrace schématu a obě se musí shodovat; některá pravidla (kapacita stanice > 1) EXCLUDE nevyjádří |
+| chování při selhání | prohraný požadavek čeká na zámek, pak dostane srozumitelný `OVERLAP` z Pythonu; riziko deadlocku nebo vypršení zámku při špatném pořadí | prohraný požadavek dostane chybu databáze při zápisu a service ji musí podle názvu constraintu převést na `OVERLAP` / `DAILY_LIMIT` (spike to už dělá pro BR-02) |
+| DR2 / provozní složitost | standardní SQL; zámek se drží po dobu transakce, takže v ní nesmí být nic pomalého (e-mail, DR3) | závislost na funkcích PostgreSQL (`btree_gist`, `tstzrange`); žádné ruční zámky ani řazení; constrainty jsou součást migrací schématu |
+
+Ověření indexu pro BR-04 (PostgreSQL 16 v Dockeru, dočasná tabulka v transakci s `ROLLBACK`):
+
+| Případ | Očekáváno | Výsledek |
+|---|---|---|
+| dvě CONFIRMED téhož uživatele ve stejný den UTC (různé stanice) | odmítnuto | `duplicate key value violates unique constraint "one_confirmed_per_user_day"` |
+| 23:30 UTC a 00:30 UTC dalšího dne | obě povolené (různé dny, DEC-04) | obě vloženy |
+| začátek zadaný v pražském čase `01:30+02` (= 23:30 UTC) proti CONFIRMED 23:30 UTC téhož dne | odmítnuto, den se počítá v UTC | `duplicate key value …` |
+| DRAFT ve stejný den | povolený, index platí jen pro CONFIRMED | vložen |
+
+### E3. Průchod scénářem: dvě souběžná konfliktní potvrzení
+
+Scénář OP-03 Confirm z C02 s komplikací souběhu (REQ-04): Bob potvrzuje X = AC-1 `[10:00, 11:00)`, Alice ve stejném okamžiku Y = AC-1 `[10:30, 11:30)`. Obě rezervace jsou DRAFT a žádná CONFIRMED v tom čase neexistuje.
+
+| Krok / událost | Alternativa A | Alternativa B |
+|---|---|---|
+| obě potvrzení začnou | obě transakce chtějí `SELECT … FOR UPDATE` řádku AC-1; X ho dostane, Y čeká | obě transakce běží bez čekání |
+| kontrola pravidel | X: `check()` bez konfliktu | X i Y: `check()` bez konfliktu, obě vidí „volno“ (přesně situace ze spike) |
+| zápis | X: `UPDATE CONFIRMED`, `COMMIT`, zámek uvolněn | X: `UPDATE CONFIRMED`; Y: `UPDATE CONFIRMED` narazí na constraint a čeká na výsledek X; X `COMMIT` |
+| druhý požadavek dokončí | Y dostane zámek, `check()` už vidí CONFIRMED X → `OVERLAP`, `ROLLBACK`, Y zůstává DRAFT | Y dostane porušení EXCLUDE → service vrátí `OVERLAP`, `ROLLBACK`, Y zůstává DRAFT |
+| notifikace (DR3) | e-mail o X až po `COMMIT`, mimo transakci | stejné |
+| výsledek | právě jedna CONFIRMED | právě jedna CONFIRMED |
+| varianta: Alice potvrzuje dvě své rezervace na **různých** stanicích ve stejný den (BR-04) | zámky stanic se nekříží; invariant drží, jen pokud kód zamyká i řádek uživatele | druhý zápis porušení unikátního indexu (uživatel, den) → `DAILY_LIMIT` |
+
+Obě alternativy umí požadované chování realizovat. Rozdíl je v tom, co se stane, když se v kódu na něco zapomene: v A invariant tiše přestane platit, v B zápis selže.
+
 ## C05 Detailed Design
 
 ### Selected architecture unit

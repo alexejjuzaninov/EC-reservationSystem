@@ -1,0 +1,40 @@
+@startuml activity-op01-create
+title OP-01 Create Reservation (v0.1, beze změny ve v0.2)
+|Zaměstnanec|
+start
+:zadá stanici a interval [start, end);
+|Rezervační systém|
+if (uživatel je zaměstnanec?) then ([ano])
+else ([ne])
+  :UNAUTHORIZED, nic nevznikne;
+  stop
+endif
+if (stanice existuje?) then ([ano])
+else ([ne])
+  :UNKNOWN_STATION;
+  stop
+endif
+if (start < end?) then ([ano])
+else ([ne])
+  :INVALID_INTERVAL;
+  stop
+endif
+if (délka nejvýše 4 h? BR-04) then ([ano])
+else ([ne])
+  :INVALID_DURATION;
+  stop
+endif
+if (now < start?) then ([ano])
+else ([ne])
+  :START_IN_PAST;
+  stop
+endif
+:uloží rezervaci ve stavu DRAFT;
+note right
+  překryv ani denní limit se nekontrolují:
+  DRAFT stanici neblokuje (DEC-01)
+end note
+|Zaměstnanec|
+:dostane id a stav DRAFT;
+stop
+@enduml

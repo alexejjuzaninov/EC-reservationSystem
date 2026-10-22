@@ -1,0 +1,62 @@
+@startuml activity-op03-confirm-v01
+title OP-03 Confirm Reservation (v0.1)
+|Zaměstnanec|
+start
+:požádá o potvrzení rezervace X;
+|Rezervační systém|
+if (uživatel je zaměstnanec?) then ([ano])
+else ([ne])
+  :UNAUTHORIZED;
+  stop
+endif
+if (X existuje?) then ([ano])
+else ([ne])
+  :UNKNOWN_RESERVATION;
+  stop
+endif
+if (uživatel je vlastník X?) then ([ano])
+else ([ne])
+  :UNAUTHORIZED, beze změny;
+  stop
+endif
+if (X je DRAFT?) then ([ano])
+else ([ne])
+  :INVALID_STATE, beze změny;
+  stop
+endif
+if (now < start?) then ([ano])
+else ([ne])
+  :TOO_LATE, zůstává DRAFT;
+  stop
+endif
+if (stanice v provozu?) then ([ano])
+else ([ne])
+  :INACTIVE_STATION, zůstává DRAFT;
+  stop
+endif
+if (překryv s CONFIRMED téže stanice? BR-02) then ([ne])
+else ([ano])
+  :OVERLAP, zůstává DRAFT;
+  stop
+endif
+if (vlastník už má ten den CONFIRMED? BR-04) then ([ne])
+else ([ano])
+  :DAILY_LIMIT, zůstává DRAFT;
+  stop
+endif
+:X.state = CONFIRMED;
+note right
+  kontrola a zápis jsou jeden nedělitelný krok:
+  ze souběžných konfliktních potvrzení
+  uspěje nejvýše jedno (REQ-04)
+end note
+|Notification Service|
+:e-mail vlastníkovi "potvrzeno";
+note right
+  výpadek služby: e-mail FAILED,
+  výsledek operace se nemění (REQ-09)
+end note
+|Zaměstnanec|
+:dostane X ve stavu CONFIRMED;
+stop
+@enduml

@@ -14,7 +14,7 @@ stays comparable to other teams.
 
 ## C02: výchozí stav pro C03
 
-Aplikace C02 (`reservation.py`) je záměrně jednoduchá: jeden modul, data jen v paměti, jeden zámek pro všechny operace. Webová ukázka `app/index.html` obsahuje stejná pravidla přepsaná do JavaScriptu. Architektonické drivery D1 až D5, které z C02 vyplynuly, jsou v `docs/specification.md` (část Dopad změny C02) a v `docs/evidence-and-evolution.md`. Architektura z C03 se doplní sem.
+Aplikace C02 (`reservation.py`) je záměrně jednoduchá: jeden modul, data jen v paměti, jeden zámek pro všechny operace. Webová ukázka `app/index.html` obsahuje stejná pravidla přepsaná do JavaScriptu. Architektonické drivery D1 až D5, které z C02 vyplynuly, jsou v `docs/specification.md` (část Dopad změny C02) a v `docs/evidence-and-evolution.md`. Architektura z C03 je níže (část A a části B–L), její realizace je walking skeleton ve složce `src/`.
 
 ## C03 Část A: AS-IS realizace scénáře Confirm Reservation
 
@@ -421,6 +421,49 @@ AS-IS je aplikace C02 `reservation.py` ve stavu po C05 (tag `c05-detailed-design
 | notifikace | e-mail se připraví pod zámkem, odešle po něm; jakákoli chyba → FAILED | `NotificationIntegration` za rozhraním `Notifier`, odeslání až po `COMMIT` | KEEP chování, VERIFY „až po COMMIT“ testem |
 | závislost na databázi | žádná | SQLAlchemy / psycopg jen v Reservation Store | VERIFY (architektonické pravidlo, část L2) |
 | aplikace C02 `reservation.py` a webová ukázka | běžící aplikace C02 | zmrazené artefakty C02 (tag `c02-baseline-v0.2`), evidence C02 a C05 na ně odkazuje | KEEP |
+
+### K. Změny implementace
+
+Walking skeleton je ve složce `src/` (commit `35b0175`, oprava deadlocku `92676b0`). Každý modul odpovídá jednomu prvku z G2:
+
+| Prvek G2 | Modul | Řádek z J |
+|---|---|---|
+| Reservation API | `src/reservations/api.py`: `POST /reservations`, `GET /reservations/{id}`, `GET /stations/{id}/availability`, `POST /reservations/{id}/confirm`, `…/cancel`, `…/approve`, `…/reject`; uživatel v hlavičce `X-User-Id` (TBD-01) | vstup do systému: CHANGE |
+| Reservation Management | `src/reservations/service.py`: `ReservationService`, rozhraní `ReservationRepository` a `Notifier` | životní cyklus: CHANGE (logika beze změny); vypršení: KEEP |
+| Allocation Policy a doména | `src/reservations/domain.py`: `AllocationPolicy` převzatá z `reservation.py` beze změny logiky | vyhodnocení pravidel: KEEP |
+| Reservation Store | `src/reservations/store.py`: `SqlReservationRepository`, EXCLUDE constraint `no_overlapping_confirmed`, unikátní index `one_confirmed_per_user_day`, převod porušení na `AllocationConflict`, opakování zápisu po deadlocku | trvalý stav, kontrakt, souběh, převod chyb: CHANGE |
+| Notification Integration | `src/reservations/notifications.py`: `NotificationIntegration`, náhradní služba `EmailServiceStub` | notifikace: KEEP chování |
+| composition root | `src/reservations/main.py`: propojí prvky, při startu vytvoří schéma a ukázková data | — |
+
+Odchylky od návrhu zjištěné při implementaci a jejich řešení:
+
+- Kontrakt `ReservationRepository` potřeboval kromě metod z H2 ještě `user()`, `add()`, `confirmed_for_station()` a `expire_pending()` (ostatní operace než Confirm). H2 je záměrně zaměřený na scénář Confirm, proto se neměnil.
+- Deadlock při současném zápisu CONFIRMED (viz ADR-01 a evidence C01): Reservation Store zápis opakuje.
+
+### L1. Ověření chování
+
+`cd src && python -m pytest`: **54 passed** (PostgreSQL 16 v Dockeru, Python 3.12).
+
+| Ověření | Výsledek | Doklad |
+|---|---|---|
+| walking skeleton z C01: `POST /reservations` → validace → zápis → id → automatická kontrola | 201, id, záznam v PostgreSQL; neplatný požadavek nic neuloží | `src/tests/test_walking_skeleton.py` (2) |
+| úspěšná cesta a chybové větve všech operací | všech 40 příkladů ověření C02 přes HTTP prošlo; názvy a pořadí jsou shodné s `python reservation.py test` | `src/tests/test_verification_examples.py` (40) |
+| souběh BR-02 (dvě potvrzení téže stanice) | právě jedno CONFIRMED, druhé `OVERLAP`; bez constraintů z ADR-01 test selže (`['CONFIRMED', 'CONFIRMED']`) | `test_op03_concurrent_confirmations` |
+| souběh BR-04 (jeden uživatel, dvě stanice, stejný den) | právě jedno CONFIRMED, druhé `DAILY_LIMIT`; bez indexu test selže | `src/tests/test_concurrency.py` (1) |
+| invarianty v DB i bez aplikace | překryv a druhá CONFIRMED v témže dni UTC odmítnuty, navazující časy a hranice půlnoci UTC povoleny | `src/tests/test_db_invariants.py` (4) |
+| deadlock při současném zápisu | vrací `OVERLAP`, ne chybu databáze; bez opravy 10 z 10 selže, s opravou 100 ze 100 projde | `src/tests/test_deadlock.py` (1) |
+| e-mail až po COMMIT, chyba služby nemění výsledek (DR3, VERIFY z J) | v okamžiku odeslání je CONFIRMED už zapsaná; `TimeoutError` služby → CONFIRMED + FAILED; při odeslání před zápisem test selže | `src/tests/test_notifications.py` (2) |
+| skutečný běh serveru | `uvicorn reservations.main:app`: POST → 201, confirm → 200 CONFIRMED, překrývající confirm → 409 `OVERLAP` s `related` | ruční běh, viz evidence C03 |
+
+Aplikace C02 se nezměnila a dál prochází: `python reservation.py test` 40/40, unit testy C05 13/13, `python tools/mutation_check.py` 7/7.
+
+### L2. Architektonické pravidlo
+
+**Pravidlo:** Databázi (SQLAlchemy, psycopg) zná jen Reservation Store, HTTP (FastAPI, Starlette, Pydantic) jen Reservation API; závislosti mezi moduly odpovídají G2; stav rezervace mění jen Reservation Management. Plyne z G2, G3 a ADR-01: invarianty vlastní úložiště a o přechodech rozhoduje jeden vlastník.
+
+**Kontrola:** `src/tests/test_architecture.py` čte zdrojové kódy (modul `ast`, bez spuštění) a ověří importy externích knihoven, importy mezi moduly a přiřazení `x.state = ...` mimo `service.py`. Čtvrtý test hlídá, že kontrola vidí všechny moduly z G2.
+
+**Výsledek:** 4 passed. Kontrola kontroly: v dočasné kopii s `from sqlalchemy import select` v `service.py` a `r.state = "CONFIRMED"` v `api.py` selžou dva testy a zprávy uvádějí soubor a řádek porušení.
 
 ## C05 Detailed Design
 

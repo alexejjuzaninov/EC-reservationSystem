@@ -174,6 +174,62 @@ E-maily (Notification Service):
 
 **Commit / tag aplikace:** commit `af2723f`, tag `c02-baseline-v0.2`. Příkaz ověření: `python reservation.py test`.
 
+## C03 — Architecture Evidence
+
+Podrobnosti jsou v `docs/architecture-and-decisions.md`, části C03 A–L.
+
+**Baseline:** Specification Baseline v0.2 (tag `c02-baseline-v0.2`).
+
+**Part A:** AS-IS trace scénáře OP-03 Confirm v `reservation.py`; šest nálezů (souběh jen v jednom procesu, e-mail pod zámkem, neošetřená chyba služby, stav jen v paměti, pravidla podruhé v JavaScriptu, neověřená identita).
+
+**Drivers:** DR1 souběh (BR-02, BR-04), DR2 trvalý stav, DR3 selhání notifikace, DR4 čas (vypršení žádosti).
+
+**Decision question:** Kde se musí udělat autoritativní rozhodnutí o přechodu do CONFIRMED, aby BR-02 a BR-04 platily i při souběžných požadavcích a ve více procesech?
+
+**Alternatives:** A: aplikace v transakci zamkne řádky stanice a uživatele (`SELECT … FOR UPDATE`); B: invarianty ve schématu PostgreSQL (EXCLUDE constraint, unikátní částečný index).
+
+**Scenario walkthrough:** dvě souběžná konfliktní potvrzení téže stanice a varianta jednoho uživatele na dvou stanicích ve stejný den; obě alternativy dají právě jednu CONFIRMED, liší se tím, co se stane při opomenutí v kódu.
+
+**ADR:** ADR-01, alternativa B, přijato celým týmem. Unikátní index pro BR-04 ověřen v PostgreSQL 16 před rozhodnutím.
+
+**Views:**
+
+- domain class: `docs/diagrams/c03-domain-model.svg`
+- context: `docs/diagrams/c03-context.svg`
+- static architecture: `docs/diagrams/c03-components.svg`
+- state ownership: tabulka G3
+- runtime/deployment: `docs/diagrams/c03-deployment.svg`
+- design sequence: `docs/diagrams/c03-sequence-confirm.svg`
+- focused design class: `docs/diagrams/c03-design-classes.svg`
+
+**Cross-view issues found/resolved:** (1) ADR-01 tvrdil, že Check Availability používá celou `AllocationPolicy` včetně BR-04, což odporuje REQ-02 → ADR upřesněn; (2) záznam SENT / FAILED neměl v H2 vlastníka → doplněna třída `NotificationIntegration`. Oba opraveny v artefaktech před změnou kódu.
+
+**AS-IS → TO-BE delta:** 6× CHANGE (HTTP vstup, PostgreSQL místo paměti, kontrakt úložiště, constrainty místo `threading.Lock`, převod porušení constraintu, struktura service), 4× KEEP (AllocationPolicy, líné vypršení, chování notifikací, zmrazené artefakty C02), 2× VERIFY (e-mail až po COMMIT, databáze jen v úložišti).
+
+**Implementation changes:** walking skeleton `src/` (FastAPI + SQLAlchemy + PostgreSQL), pět modulů podle G2, závislosti připnuté na verze starší dvou týdnů (`src/requirements.txt`). Po implementaci nalezen a opraven deadlock při současném zápisu (viz evidence C01, nález po integraci).
+
+**Behaviour verification:** `cd src && python -m pytest` → 54 passed: walking skeleton (2), 40 příkladů ověření C02 přes HTTP se shodnými názvy, souběh BR-02 a BR-04, invarianty v DB (4), deadlock (1), notifikace (2), architektura (4). U testů souběhu, invariantů, deadlocku a notifikací ověřeno, že při odebrané ochraně selžou. Skutečný server:
+
+```text
+$ uvicorn reservations.main:app        (DATABASE_URL = PostgreSQL ze spike C01)
+POST /reservations             -> 201 {'id': 1, 'state': 'DRAFT'}
+POST /reservations/1/confirm   -> 200 {... 'state': 'CONFIRMED' ...}
+POST /reservations/2/confirm   -> 409 {'code': 'OVERLAP', ..., 'related': [1]}
+```
+
+**Architecture conformance rule + result:** databázi zná jen Reservation Store, HTTP jen Reservation API, závislosti podle G2, stav rezervace mění jen Reservation Management; `src/tests/test_architecture.py` 4 passed; při úmyslném porušení dva testy selžou se jménem souboru a řádkem.
+
+**Remaining uncertainty / risk:**
+
+- identita uživatele je jen hlavička `X-User-Id` (TBD-01);
+- log notifikací je v paměti procesu a nedoručený e-mail se znovu neposílá (TBD-02);
+- vypršení žádosti je líné, e-mail o vypršení by potřeboval plánovač (DR4);
+- schéma vytváří aplikace při startu, nástroj na migrace chybí;
+- C05 Detailed Design popisuje `reservation.py`; po C03 je potřeba ho sladit s `src/` (stejná `AllocationPolicy`, nový úložný kontrakt);
+- webová ukázka `app/index.html` zůstává kopií pravidel C02 (driver D5), produktem je `src/`.
+
+**Commit/tag:** walking skeleton `35b0175`, oprava deadlocku `92676b0`; celý stav C03 označuje tag `c03-architecture`.
+
 ## C05 DD Verification Evidence
 
 **Tests derived from DD** (`tests/test_allocation.py`, 13 testů):

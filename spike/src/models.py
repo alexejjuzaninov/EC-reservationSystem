@@ -3,7 +3,8 @@ import enum
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String
+from sqlalchemy import DDL, DateTime, Enum, ForeignKey, String, event, text
+from sqlalchemy.dialects.postgresql import ExcludeConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -33,8 +34,25 @@ class ChargingStation(Base):
     active: Mapped[bool] = mapped_column(default=True)
 
 
+# Operátor "=" nad celým číslem (station_id) v GiST indexu potřebuje rozšíření btree_gist.
+event.listen(Base.metadata, "before_create", DDL("CREATE EXTENSION IF NOT EXISTS btree_gist"))
+
+NO_OVERLAP_CONSTRAINT = "no_overlapping_confirmed"
+
+
 class Reservation(Base):
     __tablename__ = "reservations"
+    __table_args__ = (
+        # BR-02 vynucené samotnou databází: dvě CONFIRMED rezervace téže stanice se nesmějí
+        # překrývat. tstzrange(..., '[)') = polootevřený interval, navazující časy jsou povolené.
+        ExcludeConstraint(
+            ("station_id", "="),
+            (text("tstzrange(start_time, end_time, '[)')"), "&&"),
+            using="gist",
+            where=text("state = 'CONFIRMED'"),
+            name=NO_OVERLAP_CONSTRAINT,
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))

@@ -82,7 +82,7 @@ Používá stejnou databázi `swi-db` jako spike; testovací databázi `reservat
 cd src
 py -3.12 -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python -m pytest                              # očekáváno: 66 passed
+.venv\Scripts\python -m pytest                              # očekáváno: 71 passed
 .venv\Scripts\python -m uvicorn reservations.main:app       # server na http://127.0.0.1:8000, dokumentace API na /docs
 ```
 

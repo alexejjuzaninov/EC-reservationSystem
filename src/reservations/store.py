@@ -35,6 +35,7 @@ from .domain import (
     ChargingStation,
     Reservation,
     Role,
+    StaleState,
     State,
     User,
     overlaps,
@@ -192,15 +193,23 @@ class SqlReservationRepository:
             s.commit()
             return _reservation(row)
 
-    def save(self, reservation: Reservation) -> None:
+    def save(self, reservation: Reservation, expected: State) -> None:
+        """Zapíše nový stav, jen pokud je v databázi pořád `expected` (stav, ze kterého operace vyšla).
+
+        Souběžné UPDATE téhož řádku čeká na zámek řádku a podmínku vyhodnotí nad zapsanou verzí:
+        pozdější operace tak nepřepíše výsledek dřívější (BR-03), ale dostane StaleState.
+        """
         for attempt in range(1, SAVE_ATTEMPTS + 1):
             with self._sessions() as s:
                 try:
-                    s.execute(
+                    result = s.execute(
                         update(ReservationRow)
-                        .where(ReservationRow.id == reservation.id)
+                        .where(ReservationRow.id == reservation.id, ReservationRow.state == expected)
                         .values(state=reservation.state)
                     )
+                    if result.rowcount == 0:
+                        s.rollback()
+                        raise StaleState(f"Rezervace {reservation.id} už není ve stavu {expected.value}.")
                     s.commit()
                     return
                 except IntegrityError as exc:

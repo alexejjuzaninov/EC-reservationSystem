@@ -73,6 +73,13 @@ class AllocationConflict(ReservationError):
     """Zápis CONFIRMED odmítla databáze (ADR-01): souběžné potvrzení bylo zapsáno dřív."""
 
 
+class StaleState(Exception):
+    """Stav rezervace se mezi přečtením a zápisem změnil: souběžná operace ji zapsala dřív (BR-03).
+
+    Není to chyba pro volajícího: Reservation Management operaci zopakuje nad aktuálním stavem.
+    """
+
+
 def overlaps(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> bool:
     """BR-01: polootevřené intervaly [start, end) se překrývají, jen když sdílejí nějaký okamžik."""
     return a_start < b_end and b_start < a_end

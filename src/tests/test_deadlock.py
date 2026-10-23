@@ -55,7 +55,7 @@ def test_deadlock_between_concurrent_confirmations_is_reported_as_overlap(system
     def t1():
         a.state = State.CONFIRMED
         try:
-            repo.save(a)
+            repo.save(a, expected=State.DRAFT)
             outcome["result"] = "saved"
         except Exception as exc:  # noqa: BLE001 — test zaznamená jakoukoli chybu
             outcome["result"] = exc

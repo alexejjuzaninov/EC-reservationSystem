@@ -111,11 +111,11 @@ Plné znění Project Frame a future pressure je v [`docs/intent-and-change.md`]
 
 | Krok | Provedení |
 |---|---|
-| Issue | #1 C01 engineering spike: enforce non-overlapping confirmed reservations |
-| Autor změny | [DOPLNIT jméno], větev `spike/overlap-check` |
-| Reviewer | [DOPLNIT jméno], Pull Request #2, review před mergem |
-| Obsah review | kontrola překryvu je v service vrstvě, ne v endpointu; hraniční případ konec == začátek je povolený; test bez opravy skutečně padá |
-| Integrace | PR #2 sloučen do `main` po schválení reviewerem |
+| Issue | [#3 C01 engineering spike](https://github.com/alexejjuzaninov/EC-reservationSystem/issues/3): vynutit BR-02 i při souběhu |
+| Autor změny | Aleksej Južaninov, větev `c01-db-overlap-constraint` (commity `238e8ce`, `a809456`) |
+| Reviewer | Maksym Panfilov (GitHub `Makusu1`), [Pull Request #4](https://github.com/alexejjuzaninov/EC-reservationSystem/pull/4), stav Approved před mergem |
+| Obsah review | spike spuštěn lokálně (Docker Desktop, PostgreSQL 16, Python 3.13): `4 passed`; po dočasném zakomentování EXCLUDE constraintu 2 failed (`assert 2 == 1`, `DID NOT RAISE IntegrityError`), po vrácení opět `4 passed`; navazující interval projde |
+| Integrace | PR #4 sloučen do `main` merge commitem `ac72d92`, issue #3 se tím uzavřel |
 
 ### Engineering spike: varianta A (persistence)
 

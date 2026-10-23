@@ -18,7 +18,7 @@ Aplikace C02 (`reservation.py`) je záměrně jednoduchá: jeden modul, data jen
 
 ## C03 Část A: AS-IS realizace scénáře Confirm Reservation
 
-Stav kódu: commit `af2723f`. Odkazy `reservation.py:řádek` platí pro tento commit. Sledujeme Python aplikaci `reservation.py`; webová ukázka `app/index.html` obsahuje stejnou logiku podruhé (nález 5).
+Stav kódu: commit `a4e1f4e`. Odkazy `reservation.py:řádek` platí pro tento commit. Sledujeme Python aplikaci `reservation.py`; webová ukázka `app/index.html` obsahuje stejnou logiku podruhé (nález 5).
 
 ### A1. Sledovaný scénář
 
@@ -154,7 +154,7 @@ Další nálezy pro návrh (nálezy 2 a 3): odeslání e-mailu by mělo proběhn
 
 ### A9. Použití AI
 
-AI posloužila k navigaci v kódu, návrhu trace a první verzi diagramu. Zapsaná tvrzení jsou ověřená v kódu (čísla řádků pro commit `af2723f`), testy `python reservation.py test` (40/40), během `python reservation.py demo` a dvěma runtime pokusy u nálezů 2 a 3.
+AI posloužila k navigaci v kódu, návrhu trace a první verzi diagramu. Zapsaná tvrzení jsou ověřená v kódu (čísla řádků pro commit `a4e1f4e`), testy `python reservation.py test` (40/40), během `python reservation.py demo` a dvěma runtime pokusy u nálezů 2 a 3.
 
 ## C03 Části B–M: architektura
 
@@ -424,7 +424,7 @@ AS-IS je aplikace C02 `reservation.py` ve stavu po C05 (tag `c05-detailed-design
 
 ### K. Změny implementace
 
-Walking skeleton je ve složce `src/` (commit `35b0175`, oprava deadlocku `92676b0`). Každý modul odpovídá jednomu prvku z G2:
+Walking skeleton je ve složce `src/` (commit `bb299e5`, oprava deadlocku `eb8c636`). Každý modul odpovídá jednomu prvku z G2:
 
 | Prvek G2 | Modul | Řádek z J |
 |---|---|---|
@@ -467,7 +467,7 @@ Aplikace C02 se nezměnila a dál prochází: `python reservation.py test` 40/40
 
 ## C05 Detailed Design
 
-První verze DD (tag `c05-detailed-design`, commit `7a6f1af`) popisovala tutéž jednotku v aplikaci C02 `reservation.py`. Ta zůstává beze změny jako artefakt C02 a její testy (`tests/test_allocation.py`, 13) dál procházejí. Po C03 jednotka žije ve walking skeletonu `src/` a tento DD popisuje ji. Co C03 v návrhu změnilo, je v poslední části „Změny DD po C03“.
+První verze DD (tag `c05-detailed-design`, commit `0686cde`) popisovala tutéž jednotku v aplikaci C02 `reservation.py`. Ta zůstává beze změny jako artefakt C02 a její testy (`tests/test_allocation.py`, 13) dál procházejí. Po C03 jednotka žije ve walking skeletonu `src/` a tento DD popisuje ji. Co C03 v návrhu změnilo, je v poslední části „Změny DD po C03“.
 
 ### Selected architecture unit
 

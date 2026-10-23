@@ -135,10 +135,10 @@ Plné znění Project Frame a future pressure je v [`docs/intent-and-change.md`]
 | Krok | Provedení |
 |---|---|
 | Issue | [#3 C01 engineering spike](https://github.com/alexejjuzaninov/EC-reservationSystem/issues/3): vynutit BR-02 i při souběhu |
-| Autor změny | Aleksej Južaninov, větev `c01-db-overlap-constraint` (commity `238e8ce`, `a809456`) |
+| Autor změny | Viacheslav Zlobin, commity `6185d77`, `8639309` ve větvi `c01-db-overlap-constraint`; PR otevřel Aleksej Južaninov |
 | Reviewer | Maksym Panfilov (GitHub `Makusu1`), [Pull Request #4](https://github.com/alexejjuzaninov/EC-reservationSystem/pull/4), stav Approved před mergem |
 | Obsah review | spike spuštěn lokálně (Docker Desktop, PostgreSQL 16, Python 3.13): `4 passed`; po dočasném zakomentování EXCLUDE constraintu 2 failed (`assert 2 == 1`, `DID NOT RAISE IntegrityError`), po vrácení opět `4 passed`; navazující interval projde |
-| Integrace | PR #4 sloučen do `main` merge commitem `ac72d92`, issue #3 se tím uzavřel |
+| Integrace | PR #4 sloučen do `main` merge commitem `fd727bf`, issue #3 se tím uzavřel |
 
 ### Engineering spike: varianta A (persistence)
 

@@ -11,7 +11,7 @@ Kód spike je ve složce `spike/`, postup spuštění je v `README.md`, část R
 | Observed result | Sekvenčně: překryv odmítnut, navazující rezervace potvrzena, stav po novém načtení trvá. Souběžně: obě rezervace skončí CONFIRMED (`AssertionError: assert 2 == 1`). Kontrola v aplikaci pravidlo při souběhu neudrží, protože databáze sama žádné omezení nemá. |
 | Decision / what changes | BR-02 vynucuje databáze: EXCLUDE constraint `no_overlapping_confirmed` nad `(station_id, tstzrange(start_time, end_time, '[)'))` pro řádky ve stavu CONFIRMED. Kontrola v service vrstvě zůstává kvůli srozumitelné chybě v běžném případě; porušení constraintu service převede na `OverlapError`. Stejné řešení převezme walking skeleton pro CP1, v C03 ho zdůvodní ADR. Souvisí s pressure R. |
 
-### Ověření po změně (commit `238e8ce`)
+### Ověření po změně (commit `6185d77`)
 
 Prostředí: Windows 11, Python 3.12.8, PostgreSQL 16 (`postgres:16` v Dockeru), SQLAlchemy 2.1.6, psycopg 3.3.6, pytest 9.1.1.
 
@@ -172,7 +172,7 @@ E-maily (Notification Service):
 
 5. **D5 Pravidla jsou napsaná dvakrát.** `reservation.py` a `app/index.html` obsahují stejnou doménu ve dvou jazycích a jejich shodu automaticky nic nehlídá; v C03 by webová ukázka měla volat jedno API místo vlastní kopie pravidel.
 
-**Commit / tag aplikace:** commit `af2723f`, tag `c02-baseline-v0.2`. Příkaz ověření: `python reservation.py test`.
+**Commit / tag aplikace:** commit `a4e1f4e`, tag `c02-baseline-v0.2`. Příkaz ověření: `python reservation.py test`.
 
 ## C03 — Architecture Evidence
 
@@ -227,7 +227,7 @@ POST /reservations/2/confirm   -> 409 {'code': 'OVERLAP', ..., 'related': [1]}
 - schéma vytváří aplikace při startu, nástroj na migrace chybí;
 - webová ukázka `app/index.html` zůstává kopií pravidel C02 (driver D5), produktem je `src/`.
 
-**Commit/tag:** walking skeleton `35b0175`, oprava deadlocku `92676b0`; celý stav C03 označuje tag `c03-architecture`.
+**Commit/tag:** walking skeleton `bb299e5`, oprava deadlocku `eb8c636`; celý stav C03 označuje tag `c03-architecture`.
 
 ## C04
 
@@ -311,4 +311,4 @@ Kontrola, že testy rozhodnutí DD opravdu hlídají (dočasná kopie `src/`, re
 - při velmi silném souběhu by tři pokusy po deadlocku nemusely stačit a volající by dostal chybu databáze (při testech nepozorováno);
 - webová ukázka `app/index.html` je kopie pravidel C02 (driver D5).
 
-**Commit/tag:** první verze DD `7a6f1af` (tag `c05-detailed-design`); aktualizace po C03 je součástí stavu označeného tagem `c03-architecture`.
+**Commit/tag:** první verze DD `0686cde` (tag `c05-detailed-design`); aktualizace po C03 je součástí stavu označeného tagem `c03-architecture`.

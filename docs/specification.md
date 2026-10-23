@@ -597,5 +597,5 @@ Rozhodnutí, která specifikace dělá vědomě. AI je nesmí udělat potichu, p
 
 | Verze | Obsah | Schválili | Commit / tag |
 |---|---|---|---|
-| Baseline v0.1 | čtyři základní operace, diagramy, konzistence | Viacheslav Zlobin, Maksym Panfilov, Aleksej Južaninov, Ivan Akulovich | `af2723f` (v0.1 nemá samostatný commit, byla zapsána spolu s v0.2) |
-| Baseline v0.2 | změna C02: schvalování, OP-05, nové stavy | Viacheslav Zlobin, Maksym Panfilov, Aleksej Južaninov, Ivan Akulovich | `af2723f`, tag `c02-baseline-v0.2` |
+| Baseline v0.1 | čtyři základní operace, diagramy, konzistence | Viacheslav Zlobin, Maksym Panfilov, Aleksej Južaninov, Ivan Akulovich | `a4e1f4e` (v0.1 nemá samostatný commit, byla zapsána spolu s v0.2) |
+| Baseline v0.2 | změna C02: schvalování, OP-05, nové stavy | Viacheslav Zlobin, Maksym Panfilov, Aleksej Južaninov, Ivan Akulovich | `a4e1f4e`, tag `c02-baseline-v0.2` |

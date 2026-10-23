@@ -1,0 +1,29 @@
+@startuml activity-op02-check-availability
+title OP-02 Check Availability (v0.1, beze změny ve v0.2)
+|Uživatel|
+start
+:zadá stanici a interval [start, end);
+|Rezervační systém|
+if (stanice existuje?) then ([ano])
+else ([ne])
+  :UNKNOWN_STATION;
+  stop
+endif
+if (interval platný a nejvýše 4 h?) then ([ano])
+else ([ne])
+  :INVALID_INTERVAL nebo INVALID_DURATION;
+  stop
+endif
+if (stanice v provozu?) then ([ano])
+  if (překryv s CONFIRMED rezervací téže stanice? BR-02) then ([ne])
+    :AVAILABLE;
+  else ([ano])
+    :UNAVAILABLE;
+  endif
+else ([ne])
+  :UNAVAILABLE;
+endif
+|Uživatel|
+:dostane výsledek;
+stop
+@enduml

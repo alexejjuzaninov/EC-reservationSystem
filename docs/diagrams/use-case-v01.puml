@@ -1,0 +1,27 @@
+@startuml use-case-v01
+title Případy užití, baseline v0.1
+left to right direction
+skinparam packageStyle rectangle
+
+actor "Zaměstnanec" as emp
+actor "Facility admin" as adm
+actor "Notification Service" as ns <<system>>
+
+rectangle "Rezervační systém nabíjecích stanic" {
+  usecase "Vytvořit rezervaci\n(OP-01)" as UC1
+  usecase "Zjistit dostupnost\n(OP-02)" as UC2
+  usecase "Potvrdit rezervaci\n(OP-03)" as UC3
+  usecase "Zrušit rezervaci\n(OP-04)" as UC4
+}
+
+emp -- UC1
+emp -- UC2
+emp -- UC3
+emp -- UC4
+adm -- UC2
+adm -- UC4
+
+UC3 -- ns
+UC4 -- ns
+
+@enduml

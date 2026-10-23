@@ -33,8 +33,6 @@ Kontrola, že testy pravidlo skutečně ověřují: v dočasné kopii `spike/` j
 
 ## Evidence C02: specifikace → běžící aplikace
 
-Shodné s částí Evidence C02 v `README.md`.
-
 **Přijatá baseline:** Specification Baseline v0.2 (v0.1 schválena před změnou). Doména a pravidla z C01: firemní nabíjecí stanice, zaměstnanci, Facility admin, Notification Service.
 
 **Předvedené základní operace:**
@@ -50,9 +48,8 @@ Shodné s částí Evidence C02 v `README.md`.
 **Skutečně provedené příklady ověření:**
 
 - `python reservation.py test`: **40/40 příkladů prošlo** (výstup níže). Stejných 40 příkladů se stejnými názvy prochází i ve webové ukázce (`app/index.html`, část Automatické ověření).
-- Mutační kontrola testů: po odebrání zámku selže test souběhu (`['CONFIRMED', 'CONFIRMED']`), po odebrání denního limitu selžou oba testy `DAILY_LIMIT`, po uzavření intervalů (`<=` místo `<`) selžou tři hraniční příklady a po vypnutí kontroly provozu stanice selže příklad dostupnosti AC-2.
-- Diferenciální test: 4000 náhodných posloupností (60 921 operací) proběhlo v `reservation.py` i ve webové ukázce se shodným výsledkem každé operace, shodným konečným stavem i shodnými e-maily (0 rozdílů). Ve všech 4000 konečných stavech platí BR-02 i denní limit z BR-04.
-- `python reservation.py demo` (výstup níže) a připravené ukázky ve webové aplikaci, ověřené v prohlížeči Chromium.
+- Mutační kontrola testů (`python tools/mutation_check.py`, kód se mění jen v dočasné kopii): po odebrání zámku selže test souběhu (`['CONFIRMED', 'CONFIRMED']`), po odebrání denního limitu selžou oba příklady `DAILY_LIMIT`, po uzavření intervalů (`<=` místo `<`) selžou tři hraniční příklady a po vypnutí kontroly provozu stanice selže příklad dostupnosti AC-2.
+- `python reservation.py demo` (výstup níže) a připravené ukázky ve webové aplikaci.
 
 <details>
 <summary>Výstup <code>python reservation.py test</code></summary>
@@ -158,13 +155,13 @@ E-maily (Notification Service):
 
 **Shrnutí dopadu změny:** Create, Check Availability, BR-01, BR-02 a BR-04 se nezměnily. Confirm se větví podle `requires_approval`. Facility admin dostal operaci Approve / Reject, přibyly stavy PENDING_APPROVAL, REJECTED a EXPIRED a Cancel umí zrušit i čekající žádost.
 
-**Zbývající předpoklad / neznámá:** TBD-01 až TBD-06, viz `README.md`, část Rozhodnutí týmu a otevřené otázky.
+**Zbývající předpoklad / neznámá:** TBD-01 až TBD-06, viz `docs/specification.md`, část Rozhodnutí týmu a otevřené otázky.
 
-**Architektonické drivery přenesené do C03:** D1 až D4 (popsané v `README.md`, část Dopad změny C02) a navíc:
+**Architektonické drivery přenesené do C03:** D1 až D4 (popsané v `docs/specification.md`, část Dopad změny C02) a navíc:
 
-5. **D5 Pravidla jsou napsaná dvakrát.** `reservation.py` a `app/index.html` obsahují stejnou doménu ve dvou jazycích. Shodu dnes hlídá diferenciální test; v C03 by webová ukázka měla volat jedno API místo vlastní kopie pravidel.
+5. **D5 Pravidla jsou napsaná dvakrát.** `reservation.py` a `app/index.html` obsahují stejnou doménu ve dvou jazycích a jejich shodu automaticky nic nehlídá; v C03 by webová ukázka měla volat jedno API místo vlastní kopie pravidel.
 
-**Commit / tag aplikace:** tag `c02-baseline-v0.2`, commit [DOPLNIT hash]. Příkaz ověření: `python reservation.py test`.
+**Commit / tag aplikace:** commit `af2723f`, tag `c02-baseline-v0.2`. Příkaz ověření: `python reservation.py test`.
 
 ## C05 DD Verification Evidence
 
@@ -213,7 +210,7 @@ $ python reservation.py test
 40/40 příkladů prošlo.
 ```
 
-Mutační kontrola testů: e-mail odeslaný pod zámkem → selže `test_slow_notifier…`; zachycení jen `NotificationUnavailable` → selže `test_unexpected_notifier…`; přesunutí kontroly provozu stanice za BR-04 → selže `test_check_order…`. Diferenciální test proti `app/index.html` (4000 náhodných posloupností) má po refaktoringu 0 rozdílů.
+Mutační kontrola testů (`python tools/mutation_check.py`): e-mail odeslaný pod zámkem → selže `test_slow_notifier…`; zachycení jen `NotificationUnavailable` → selže `test_unexpected_notifier…`; přesunutí kontroly provozu stanice za BR-04 → selže `test_check_order…`. Skript ověří i mutace z C02 a skončí chybou, pokud kontrolní běh neprojde nebo některou mutaci testy neodhalí. Výsledek: 7/7 mutací zabito.
 
 **Design ↔ implementation mismatch:**
 
@@ -224,7 +221,7 @@ Mutační kontrola testů: e-mail odeslaný pod zámkem → selže `test_slow_no
 | systém závisí jen na kontraktu `ReservationRepository` | PARTLY, opraveno | první verze měla v konstruktoru typ `InMemoryReservationRepository` a vlastnost `reservations` četla přímo `repository.items` | update code: typ `ReservationRepository`, `reservations` jde přes `all()` |
 | e-mail mimo zámek, jakákoli chyba → FAILED | YES | `_queue_notification()`, `_dispatch_notifications()`; dva component testy | keep |
 | jeden zámek zajišťuje REQ-04 | PARTLY | platí jen uvnitř jednoho procesu | keep pro C05; v CP1 nahradit zárukou v DB (otázka A8 z C03) |
-| jedno místo pravidla | PARTLY | `app/index.html` má vlastní kopii; jediná změna tam: zachycení jakékoli chyby e-mailu | keep, shodu hlídá diferenciální test (driver D5) |
+| jedno místo pravidla | PARTLY | `app/index.html` má vlastní kopii; jediná změna tam: zachycení jakékoli chyby e-mailu | keep, vedeno jako riziko (driver D5) |
 
 **Resolution:** kód upraven tam, kde se odchýlil od návrhu (závislost na kontraktu repository). Odchylky, které návrh vědomě přijímá (zámek v procesu, kopie pravidel ve webu), zůstávají a jsou vedené jako riziko.
 
@@ -234,4 +231,4 @@ Mutační kontrola testů: e-mail odeslaný pod zámkem → selže `test_slow_no
 - e-mail se odesílá synchronně ve vlákně volajícího; volající na pomalou službu stále čeká, jen už neblokuje ostatní operace; skutečná fronta (outbox v DB) je úkol pro CP1;
 - nedoručené e-maily se znovu neposílají (TBD-02).
 
-**Commit/tag:** tag `c05-detailed-design`, commit [DOPLNIT hash].
+**Commit/tag:** commit `7a6f1af`, tag `c05-detailed-design`.

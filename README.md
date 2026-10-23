@@ -25,8 +25,9 @@ Firemní nabíjecí stanice pro elektromobily jsou omezený zdroj. Zaměstnanec 
 | C03 | diagramy architektury (zdroje `.puml`) | [`docs/diagrams/`](docs/diagrams/), soubory `c03-*` |
 | C03 | walking skeleton (FastAPI + PostgreSQL) a jeho testy | [`src/`](src/) |
 | C03 | evidence architektury | [`docs/evidence-and-evolution.md`](docs/evidence-and-evolution.md), část C03 |
-| C05 | Detailed Design | [`docs/architecture-and-decisions.md`](docs/architecture-and-decisions.md), část C05 |
-| C05 | unit/component testy odvozené z DD | [`tests/test_allocation.py`](tests/test_allocation.py) |
+| C04 | samostatné zadání nebylo (cvičení věnována C03) | [`docs/evidence-and-evolution.md`](docs/evidence-and-evolution.md), část C04 |
+| C05 | Detailed Design (jednotka přidělení stanice v `src/`) | [`docs/architecture-and-decisions.md`](docs/architecture-and-decisions.md), část C05 |
+| C05 | unit/component testy odvozené z DD | [`src/tests/test_allocation_dd.py`](src/tests/test_allocation_dd.py); první verze nad aplikací C02 [`tests/test_allocation.py`](tests/test_allocation.py) |
 | C05 | evidence DD | [`docs/evidence-and-evolution.md`](docs/evidence-and-evolution.md), část C05 |
 | C02, C05 | mutační kontrola testů | [`tools/mutation_check.py`](tools/mutation_check.py) |
 | C01 | odevzdaný dokument | [`docs/SWI-C01-reservation-system.pdf`](docs/SWI-C01-reservation-system.pdf) |
@@ -38,7 +39,7 @@ Aplikace C02 potřebuje jen Python 3.10 nebo novější, žádné další balí�
 ```bash
 python reservation.py test                  # 40 příkladů ověření ze specifikace, výsledek PASS/FAIL
 python reservation.py demo                  # krátká ukázka všech operací
-python -m unittest discover -s tests -v     # 13 unit/component testů z Detailed Design (C05)
+python -m unittest discover -s tests -v     # 13 testů první verze C05 DD nad aplikací C02
 python tools/mutation_check.py              # ověří, že testy odhalí 7 záměrně pokažených pravidel
 ```
 
@@ -81,7 +82,7 @@ Používá stejnou databázi `swi-db` jako spike; testovací databázi `reservat
 cd src
 py -3.12 -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python -m pytest                              # očekáváno: 54 passed
+.venv\Scripts\python -m pytest                              # očekáváno: 66 passed
 .venv\Scripts\python -m uvicorn reservations.main:app       # server na http://127.0.0.1:8000, dokumentace API na /docs
 ```
 

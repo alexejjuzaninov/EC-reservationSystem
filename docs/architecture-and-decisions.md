@@ -442,7 +442,7 @@ Odchylky od návrhu zjištěné při implementaci a jejich řešení:
 
 ### L1. Ověření chování
 
-`cd src && python -m pytest`: **54 passed** (PostgreSQL 16 v Dockeru, Python 3.12).
+`cd src && python -m pytest`: **66 passed** (PostgreSQL 16 v Dockeru, Python 3.12); z toho 54 testů z C03 níže a 12 unit/component testů z C05 DD (`src/tests/test_allocation_dd.py`).
 
 | Ověření | Výsledek | Doklad |
 |---|---|---|
@@ -467,39 +467,43 @@ Aplikace C02 se nezměnila a dál prochází: `python reservation.py test` 40/40
 
 ## C05 Detailed Design
 
+První verze DD (tag `c05-detailed-design`, commit `7a6f1af`) popisovala tutéž jednotku v aplikaci C02 `reservation.py`. Ta zůstává beze změny jako artefakt C02 a její testy (`tests/test_allocation.py`, 13) dál procházejí. Po C03 jednotka žije ve walking skeletonu `src/` a tento DD popisuje ji. Co C03 v návrhu změnilo, je v poslední části „Změny DD po C03“.
+
 ### Selected architecture unit
 
 | Položka | Hodnota |
 |---|---|
-| Selected architecture unit / responsibility | **Přidělení stanice (Reservation allocation):** rozhodnutí, zda se rezervace smí stát CONFIRMED, a provedení tohoto přechodu včetně notifikace |
+| Selected architecture unit / responsibility | **Přidělení stanice (Reservation allocation):** rozhodnutí, zda se rezervace smí stát CONFIRMED, zápis tohoto přechodu včetně invariantu v databázi a notifikace. V C03 jsou to odpovědnosti R4 a R5 (Allocation Policy, `ReservationService._allocate()`, `SqlReservationRepository.save()`). |
 | Related requirement(s) | REQ-03, REQ-04, REQ-06, REQ-09 |
 | Related scenario(s) | OP-03 Confirm Reservation (stanice bez schválení), OP-05 Approve Reservation |
 | Relevant business rule(s) | BR-01 (polootevřené intervaly), BR-02 (nepřekrývání CONFIRMED), BR-04 (denní limit podle data začátku v UTC) |
-| Hranice jednotky | patří sem rozhodnutí o alokaci, data potřebná k rozhodnutí, zápis stavu a odeslání e-mailu; nepatří sem vytvoření rezervace, kontrola dostupnosti ani schvalovací workflow mimo samotné přidělení |
+| Hranice jednotky | patří sem rozhodnutí o alokaci, data potřebná k rozhodnutí, zápis CONFIRMED a převod porušení invariantu, odeslání e-mailu po zápisu; nepatří sem HTTP, vytvoření rezervace, kontrola dostupnosti, zrušení ani schvalovací workflow mimo samotné přidělení |
 
-Proč tato jednotka: v C03 vyšlo, že právě zde je hlavní logika (BR-02, BR-04) a tři nálezy: rozhodnutí je zapletené do jedné velké třídy, e-mail se posílá pod zámkem (nález 2) a neočekávaná chyba e-mailu doběhne k volajícímu (nález 3). Otázka A8 (BR-02 po přechodu na PostgreSQL) potřebuje mezi logikou a daty jasný kontrakt.
+Proč tato jednotka: obsahuje hlavní logiku systému (BR-02, BR-04) a hlavní architektonické rozhodnutí C03 (ADR-01). Rozhodnutí je rozdělené mezi aplikaci (srozumitelná chyba) a databázi (záruka při souběhu) a DD musí říct, jak spolu tyto části zacházejí.
 
 ### Detailed responsibilities
 
 | Detailed responsibility | Why is it needed? |
 |---|---|
-| serializovat rozhodnutí o alokaci | REQ-04: ze souběžných konfliktních potvrzení nejvýše jedno CONFIRMED |
 | ověřit oprávnění a výchozí stav (vlastník a DRAFT, resp. Facility admin a PENDING_APPROVAL, `now < start`) | přechod je povolený jen z konkrétního stavu a jen oprávněnému aktérovi |
-| načíst data potřebná k rozhodnutí (CONFIRMED rezervace téže stanice a téhož uživatele) | BR-02 a BR-04 se vyhodnocují nad potvrzenými rezervacemi; s PostgreSQL to bude jeden dotaz |
-| rozhodnout o alokaci: provoz stanice, BR-02, BR-04, v pevném pořadí | jedno místo pravidla pro Confirm i Approve (pressure R z C01) |
-| provést přechod do CONFIRMED | jediný okamžik vzniku alokace |
-| odeslat e-mail mimo kritickou sekci a zapsat výsledek | REQ-09: e-mail nesmí určovat ani zdržovat výsledek |
+| načíst data potřebná k rozhodnutí (CONFIRMED rezervace téže stanice nebo téhož uživatele) | BR-02 a BR-04 se vyhodnocují nad potvrzenými rezervacemi |
+| rozhodnout o alokaci: provoz stanice, BR-02, BR-04, v pevném pořadí | jedno místo pravidla pro Confirm i Approve; srozumitelná chyba v běžném případě |
+| zapsat přechod do CONFIRMED tak, aby ze souběžných konfliktních zápisů prošel nejvýše jeden | REQ-04, ADR-01: poslední slovo má databáze |
+| převést porušení invariantu při zápisu na stejnou doménovou chybu jako u policy | volající nemá rozlišovat, kdo konflikt odhalil |
+| po deadlocku zápis zopakovat | dva současné zápisy může PostgreSQL ukončit deadlockem místo porušení constraintu |
+| odeslat e-mail až po zápisu a zapsat výsledek | REQ-09, DR3: e-mail nesmí určovat ani zdržovat výsledek |
 
 ### Design elements and ownership
 
 | Responsibility | Owner | State/data | Why here? |
 |---|---|---|---|
-| serializace, oprávnění, výchozí stav, provedení přechodu | `ChargingReservationSystem.confirm()` / `approve()` (application service) | `_lock: threading.Lock`; mění `Reservation.state` | koordinuje spolupracovníky a drží transakční hranici operace |
-| rozhodnutí o alokaci | `AllocationPolicy.check()` (policy, čistá funkce) | žádný vlastní stav; vstupem je kandidát, stanice a ostatní rezervace | testovatelné bez hodin, zámku i úložiště; stejné pro Confirm i Approve |
-| výsledek rozhodnutí | `AllocationDecision` (value object, frozen) | `allowed`, `code`, `related` | rozhodnutí je hodnota, ne výjimka; volající sám určí, jak ji přeloží |
-| data k rozhodnutí | `ReservationRepository` (interface) a `InMemoryReservationRepository` | slovník `items: Dict[str, Reservation]` | systém zná jen kontrakt; v CP1 přibude `SqlReservationRepository` bez změny policy |
-| odeslání e-mailu | `_queue_notification()` + `_dispatch_notifications()`, rozhraní `Notifier` | fronta `_outbox`, log `notifications` | e-mail se připraví pod zámkem (konzistentní data), odejde až po jeho uvolnění |
-| perzistentní stav rezervace | `Reservation` (dataclass) | `id, user_id, station_id, start_time, end_time, created_at, state` | entita z Project Frame C01 |
+| oprávnění, výchozí stav, orchestrace přechodu | `ReservationService.confirm()` / `approve()` → `_allocate()` | mění `Reservation.state`, zapisuje přes `ReservationRepository` | jediný vlastník přechodů stavu (C03 G3, pravidlo L2) |
+| rozhodnutí o alokaci | `AllocationPolicy.check()` (policy, čistá funkce) | žádný vlastní stav | testovatelné bez databáze; stejné pro Confirm i Approve; beze změny od první verze DD |
+| výsledek rozhodnutí | `AllocationDecision` (value object, frozen) | `allowed`, `code`, `related` | rozhodnutí je hodnota, ne výjimka |
+| data k rozhodnutí a zápis | rozhraní `ReservationRepository`, implementace `SqlReservationRepository` | tabulka `reservations`; EXCLUDE `no_overlapping_confirmed`, unikátní index `one_confirmed_per_user_day` | jen úložiště zná SQL a názvy constraintů (L2) |
+| porušení invariantu při zápisu | `AllocationConflict` (podtřída `ReservationError`) | `code`, `related` | stejné kódy jako u policy, takže API ani volající nic nového neřeší |
+| odeslání e-mailu | rozhraní `Notifier`, implementace `NotificationIntegration` | log `SENT` / `FAILED` v paměti procesu | výpadek služby nesmí změnit výsledek operace |
+| perzistentní stav rezervace | `Reservation` (dataclass) | `id` (přiděluje databáze), `user_id`, `station_id`, `start_time`, `end_time`, `created_at`, `state` | entita z Project Frame C01 |
 
 ### Key interface(s) / contract(s)
 
@@ -511,23 +515,29 @@ check(candidate: Reservation, station: ChargingStation, others: Iterable[Reserva
 | Contract | |
 |---|---|
 | Preconditions | `candidate` má platný interval (`start < end`), `station` je stanice kandidáta; `others` smí obsahovat rezervace v libovolném stavu i kandidáta samotného |
-| Postconditions | vrací `AllocationDecision`; `allowed = True` právě když je stanice v provozu, kandidát se nepřekrývá s žádnou CONFIRMED rezervací téže stanice (BR-01, BR-02) a vlastník nemá jinou CONFIRMED se stejným datem začátku v UTC (BR-04); jinak `allowed = False`, `code` je první porušené pravidlo v pořadí INACTIVE_STATION → OVERLAP → DAILY_LIMIT a `related` obsahuje id všech konfliktních rezervací |
+| Postconditions | `allowed = True` právě když je stanice v provozu, kandidát se nepřekrývá s žádnou CONFIRMED rezervací téže stanice (BR-01, BR-02) a vlastník nemá jinou CONFIRMED se stejným datem začátku v UTC (BR-04); jinak `allowed = False`, `code` je první porušené pravidlo v pořadí INACTIVE_STATION → OVERLAP → DAILY_LIMIT a `related` obsahuje id všech konfliktních rezervací |
 | Side effects | žádné: nemění vstupy, nečte hodiny, nic neukládá |
-| Failures | žádné výjimky; porušení pravidla je hodnota `INACTIVE_STATION`, `OVERLAP` nebo `DAILY_LIMIT` |
+| Failures | žádné výjimky; porušení pravidla je hodnota |
 
 ```text
-<<interface>> ReservationRepository
+<<interface>> ReservationRepository   (část potřebná pro přidělení)
 get(id) : Reservation | None
-add(reservation) : None
-all() : List[Reservation]
+station(id) : ChargingStation | None
 relevant_for(candidate) : List[Reservation]
+save(reservation) : None
 ```
 
-Kontrakt `relevant_for`: vrací všechny CONFIRMED rezervace téže stanice **nebo** téhož uživatele, bez kandidáta. Je to přesně množina, kterou potřebuje `AllocationPolicy`; SQL implementace ji vrátí jedním dotazem.
+| Contract `save()` | |
+|---|---|
+| Preconditions | rezervace existuje; `reservation.state` je nový stav |
+| Postconditions | nový stav je zapsaný a potvrzený (`COMMIT`); jiné spojení ho hned vidí |
+| Failures | porušení BR-02 nebo BR-04 v databázi → `AllocationConflict(OVERLAP / DAILY_LIMIT, related = konfliktní CONFIRMED)`, stav v databázi beze změny; `DeadlockDetected` → zápis se opakuje (nejvýše 3 pokusy, pauza 50 ms × pokus); jiná chyba databáze projde k volajícímu |
+
+Kontrakt `relevant_for`: vrací všechny CONFIRMED rezervace téže stanice **nebo** téhož uživatele, bez kandidáta. Je to přesně množina, kterou potřebuje `AllocationPolicy`; SQL implementace ji vrací jedním dotazem.
 
 ```text
 <<interface>> Notifier
-send(to, subject, body) : None      — při selhání vyhodí libovolnou výjimku
+send(to, subject, body) : None      — implementace NotificationIntegration žádnou chybu služby nevrací volajícímu
 ```
 
 ### Focused structural view
@@ -535,15 +545,11 @@ send(to, subject, body) : None      — při selhání vyhodí libovolnou výjim
 ```mermaid
 classDiagram
     direction LR
-    class ChargingReservationSystem {
-        -_lock: Lock
-        -_outbox: list
-        +notifications: list
+    class ReservationService {
         +confirm(user_id, reservation_id) Reservation
         +approve(user_id, reservation_id) Reservation
-        -_check_allocation(reservation)
-        -_queue_notification(reservation, event)
-        -_dispatch_notifications()
+        -_allocate(reservation) Reservation
+        -_notify(reservation, event)
     }
     class AllocationPolicy {
         +check(candidate, station, others) AllocationDecision
@@ -557,19 +563,24 @@ classDiagram
     class ReservationRepository {
         <<interface>>
         +get(id) Reservation
-        +add(reservation)
-        +all() list
+        +station(id) ChargingStation
         +relevant_for(candidate) list
+        +save(reservation)
     }
-    class InMemoryReservationRepository {
-        -items: dict
+    class SqlReservationRepository {
+        -_translate(IntegrityError, candidate) AllocationConflict
+    }
+    class AllocationConflict {
+        <<exception>>
+        +code: str
+        +related: list
     }
     class Notifier {
         <<interface>>
         +send(to, subject, body)
     }
-    class NotificationService {
-        +available: bool
+    class NotificationIntegration {
+        +log: list
     }
     class Reservation {
         <<entity>>
@@ -580,67 +591,70 @@ classDiagram
         +end_time
         +state: State
     }
-    ChargingReservationSystem --> AllocationPolicy : check()
+    ReservationService --> AllocationPolicy : check()
     AllocationPolicy ..> AllocationDecision : creates
-    ChargingReservationSystem --> ReservationRepository : get / relevant_for
-    InMemoryReservationRepository ..|> ReservationRepository
-    ChargingReservationSystem --> Notifier : send() po uvolnění zámku
-    NotificationService ..|> Notifier
-    InMemoryReservationRepository o-- Reservation : owns
+    ReservationService --> ReservationRepository : get / relevant_for / save
+    SqlReservationRepository ..|> ReservationRepository
+    SqlReservationRepository ..> AllocationConflict : raises
+    ReservationService --> Notifier : send() po COMMIT
+    NotificationIntegration ..|> Notifier
     AllocationPolicy ..> Reservation : reads
 ```
 
-Směr závislostí: `ChargingReservationSystem` závisí na kontraktech (`ReservationRepository`, `Notifier`) a na `AllocationPolicy`; policy nezávisí na ničem kromě entit. Implementace se dosazují v konstruktoru (`repository=`, `policy=`, `notifier=`).
+Směr závislostí: `ReservationService` zná jen rozhraní `ReservationRepository` a `Notifier` a třídu `AllocationPolicy`; implementace dosazuje `main.py`. Policy nezávisí na ničem kromě entit, úložiště jen na doméně. Dodržení hlídá `src/tests/test_architecture.py` (C03 L2).
 
 ### Detailed sequence
 
-C03 (architektura): `Vstupní bod → ChargingReservationSystem → In-memory store / NotificationService`.
+C03 (architektura): `Reservation API → Reservation Management → Allocation Policy / Reservation Store → PostgreSQL; Notification Integration`.
 
 C05 (DD), Confirm na stanici bez schválení:
 
 ```mermaid
 sequenceDiagram
-    participant C as Volající
-    participant S as ChargingReservationSystem
-    participant R as ReservationRepository
+    participant C as Volající (API)
+    participant S as ReservationService
+    participant R as SqlReservationRepository
     participant P as AllocationPolicy
-    participant N as Notifier
+    participant N as NotificationIntegration
     C->>S: confirm(user_id, reservation_id)
-    activate S
-    Note over S: with _lock
-    S->>R: get(reservation_id)
-    R-->>S: Reservation (DRAFT)
+    S->>R: get(reservation_id), station(station_id)
     S->>S: role, vlastník, DRAFT, now < start
     S->>R: relevant_for(reservation)
     R-->>S: CONFIRMED téže stanice / uživatele
     S->>P: check(reservation, station, others)
-    P-->>S: AllocationDecision
-    alt allowed
-        S->>S: state = CONFIRMED, _queue_notification(CONFIRMED)
-    else denied
+    alt deny
+        P-->>S: AllocationDecision(code, related)
         S-->>C: ReservationError(code, related), stav beze změny
+    else allow
+        P-->>S: allow
+        S->>R: save(reservation, CONFIRMED)
+        loop nejvýše 3 pokusy
+            R->>R: UPDATE; COMMIT
+            Note over R: DeadlockDetected → ROLLBACK, pauza, další pokus
+        end
+        alt zapsáno
+            R-->>S: ok
+            S->>N: send(to, subject, body)
+            N-->>S: záznam SENT / FAILED
+            S-->>C: Reservation (CONFIRMED)
+        else porušení constraintu (souběh)
+            R-->>S: AllocationConflict(OVERLAP / DAILY_LIMIT, related)
+            S-->>C: ReservationError, stav vrácen na DRAFT
+        end
     end
-    Note over S: zámek uvolněn
-    S->>N: send(to, subject, body)
-    N-->>S: ok / libovolná výjimka
-    S->>S: notifications += SENT / FAILED
-    S-->>C: Reservation (CONFIRMED)
-    deactivate S
 ```
 
 ### Important methods / operations
 
-| | `AllocationPolicy.check()` | `ChargingReservationSystem.confirm()` | `_dispatch_notifications()` |
-|---|---|---|---|
-| Responsibility | rozhodnout o alokaci | provést přechod DRAFT → CONFIRMED | doručit připravené e-maily |
-| Input | kandidát, stanice, ostatní rezervace | `user_id`, `reservation_id` | fronta `_outbox` |
-| Output | `AllocationDecision` | `Reservation` | nic |
-| Preconditions | platný interval kandidáta | rezervace existuje | volá se bez drženého zámku |
-| Postconditions | viz kontrakt výše | úspěch: CONFIRMED a jeden e-mail ve frontě; neúspěch: stav i fronta beze změny | fronta prázdná, každý e-mail má v `notifications` záznam SENT nebo FAILED |
-| Side effects | žádné | mění `Reservation.state`, plní `_outbox`, spustí odeslání | volá `Notifier.send()` |
-| Failure behavior | žádné výjimky, porušení vrací jako hodnotu | `ReservationError`: UNAUTHORIZED, UNKNOWN_RESERVATION, INVALID_STATE, TOO_LATE, INACTIVE_STATION, OVERLAP, DAILY_LIMIT | jakákoli výjimka z `send()` → FAILED, k volajícímu nedoběhne |
-
-`approve()` je stejná operace s jinou podmínkou výchozího stavu (Facility admin, PENDING_APPROVAL, vypršení podle BR-06) a volá stejné `_check_allocation()` → `AllocationPolicy.check()`.
+| | `AllocationPolicy.check()` | `ReservationService._allocate()` | `SqlReservationRepository.save()` | `NotificationIntegration.send()` |
+|---|---|---|---|---|
+| Responsibility | rozhodnout o alokaci | provést přechod do CONFIRMED pro Confirm i Approve | zapsat stav, převést porušení invariantu | doručit e-mail a zapsat výsledek |
+| Input | kandidát, stanice, ostatní rezervace | rezervace s ověřeným oprávněním a výchozím stavem | rezervace s novým stavem | adresát, předmět, text |
+| Output | `AllocationDecision` | `Reservation` | nic | nic |
+| Preconditions | platný interval kandidáta | volá ji jen `confirm()` / `approve()` po kontrolách | rezervace existuje | — |
+| Postconditions | viz kontrakt | úspěch: CONFIRMED zapsaná, jeden e-mail; neúspěch: stav v paměti i v DB beze změny, žádný e-mail | viz kontrakt `save()` | v logu přibyl jeden záznam SENT nebo FAILED |
+| Side effects | žádné | zápis přes repository, volání `Notifier` | `UPDATE` + `COMMIT` v PostgreSQL | volání Notification Service |
+| Failure behavior | žádné výjimky | `ReservationError`: INACTIVE_STATION, OVERLAP, DAILY_LIMIT (z policy nebo z `AllocationConflict`) | `AllocationConflict`; deadlock opakuje; jiná chyba DB projde | jakákoli výjimka služby → FAILED, k volajícímu nedoběhne |
 
 ### Algorithm / decision logic
 
@@ -664,9 +678,38 @@ check(candidate, station, others):
 | ano | ne | ano | DAILY_LIMIT + id |
 | ano | ne | ne | allow |
 
+```text
+_allocate(r):
+    decision = policy.check(r, station(r), repository.relevant_for(r))
+    if not decision.allowed:  raise ReservationError(decision.code, decision.related)
+    previous = r.state;  r.state = CONFIRMED
+    try:    repository.save(r)                        # databáze může vetovat (ADR-01)
+    except ReservationError:  r.state = previous;  raise
+    notifier.send(...)                                # až po COMMIT
+
+save(r):
+    for attempt in 1..3:
+        UPDATE reservations SET state = r.state WHERE id = r.id;  COMMIT;  return
+        on IntegrityError:    ROLLBACK
+                              no_overlapping_confirmed    → raise AllocationConflict(OVERLAP, related)
+                              one_confirmed_per_user_day  → raise AllocationConflict(DAILY_LIMIT, related)
+                              jiný constraint             → raise (chyba databáze)
+        on DeadlockDetected:  ROLLBACK;  if attempt == 3: raise;  sleep(0.05 × attempt)
+```
+
 ### DD decisions intentionally left to code
 
 - texty chybových hlášek (`ALLOCATION_MESSAGES`) a formát předmětu a těla e-mailu;
-- generování id rezervací (`R0001`, …) a pořadí položek v `related` (pořadí v úložišti);
-- testovací háček `after_checks` pro vynucení souběhu;
-- webová ukázka `app/index.html` má stejná pravidla napsaná znovu v JavaScriptu (driver D5); C05 ji strukturálně neupravuje a shodu chování automaticky nic nehlídá.
+- generování id rezervací (sekvence PostgreSQL) a pořadí položek v `related`;
+- přesný SQL dotaz v `relevant_for` (kontrakt říká, *co* vrací);
+- webová ukázka `app/index.html` má pravidla C02 napsaná znovu v JavaScriptu (driver D5); je to zmrazený artefakt C02, ne součást této jednotky.
+
+### Změny DD po C03
+
+| DD rozhodnutí v první verzi (aplikace C02) | Po C03 (`src/`) | Proč |
+|---|---|---|
+| souběh serializuje `threading.Lock` v procesu | invarianty BR-02 a BR-04 ve schématu PostgreSQL, zápis po deadlocku se opakuje | ADR-01; zámek neplatí mezi procesy |
+| `ReservationRepository`: `get`, `add`, `all`, `relevant_for`; implementace v paměti | navíc `save()` (s kontraktem chyb) a `station()`; implementace `SqlReservationRepository` | DR2: trvalý stav; změna stavu se musí zapsat |
+| e-mail se připraví pod zámkem a odešle po jeho uvolnění (`_outbox`) | e-mail se odešle po `COMMIT` přes `NotificationIntegration` | DR3; transakce je krátká a e-mail ji nezdrží |
+| `AllocationPolicy`, `AllocationDecision` | beze změny | — |
+| id rezervací `R0001`… | celé číslo ze sekvence databáze | walking skeleton |

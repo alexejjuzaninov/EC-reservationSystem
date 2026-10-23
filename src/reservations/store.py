@@ -5,6 +5,7 @@ invarianty BR-02 a BR-04 ve schématu (ADR-01) a jejich porušení převádí na
 chybu AllocationConflict. Ven vrací doménové objekty, ne řádky ORM.
 """
 import os
+import time
 from datetime import datetime
 from typing import Callable, List, Optional
 
@@ -24,7 +25,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import ExcludeConstraint
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import IntegrityError
+from psycopg.errors import DeadlockDetected
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from .domain import (
@@ -43,6 +45,8 @@ DEFAULT_DATABASE_URL = "postgresql+psycopg://postgres:swi@localhost:5432/reserva
 
 NO_OVERLAP_CONSTRAINT = "no_overlapping_confirmed"  # BR-02
 ONE_PER_DAY_INDEX = "one_confirmed_per_user_day"  # BR-04
+SAVE_ATTEMPTS = 3  # zápis se při deadlocku opakuje (viz save())
+RETRY_BACKOFF_S = 0.05
 
 
 class Base(DeclarativeBase):
@@ -189,17 +193,28 @@ class SqlReservationRepository:
             return _reservation(row)
 
     def save(self, reservation: Reservation) -> None:
-        with self._sessions() as s:
-            try:
-                s.execute(
-                    update(ReservationRow)
-                    .where(ReservationRow.id == reservation.id)
-                    .values(state=reservation.state)
-                )
-                s.commit()
-            except IntegrityError as exc:
-                s.rollback()
-                raise self._translate(exc, reservation) from exc
+        for attempt in range(1, SAVE_ATTEMPTS + 1):
+            with self._sessions() as s:
+                try:
+                    s.execute(
+                        update(ReservationRow)
+                        .where(ReservationRow.id == reservation.id)
+                        .values(state=reservation.state)
+                    )
+                    s.commit()
+                    return
+                except IntegrityError as exc:
+                    s.rollback()
+                    raise self._translate(exc, reservation) from exc
+                except OperationalError as exc:
+                    # Dva souběžné zápisy CONFIRMED mohou při kontrole EXCLUDE constraintu čekat
+                    # jeden na druhý. PostgreSQL jeden z nich ukončí deadlockem; druhý pokračuje.
+                    # Opakovaný zápis už uvidí jeho výsledek: projde, nebo skončí porušením
+                    # constraintu, tedy AllocationConflict.
+                    s.rollback()
+                    if not isinstance(exc.orig, DeadlockDetected) or attempt == SAVE_ATTEMPTS:
+                        raise
+            time.sleep(RETRY_BACKOFF_S * attempt)  # druhá transakce mezitím dokončí svůj zápis
 
     def relevant_for(self, candidate: Reservation) -> List[Reservation]:
         with self._sessions() as s:

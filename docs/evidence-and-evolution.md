@@ -31,6 +31,17 @@ Kontrola, že testy pravidlo skutečně ověřují: v dočasné kopii `spike/` j
 | bez EXCLUDE constraintu | 2 failed: `test_two_concurrent_confirmations…` (`assert 2 == 1`), `test_database_rejects_overlapping…` (`DID NOT RAISE IntegrityError`) | testy odhalí chybějící ochranu při souběhu i na úrovni DB |
 | constraint s uzavřeným intervalem `'[]'` místo `'[)'` | 2 failed: `test_database_allows_adjacent…` a `test_overlapping_confirmation…` (`ExclusionViolation` u navazující rezervace) | testy odhalí příliš přísné pravidlo, které by porušilo BR-01 (navazující časy jsou povolené) |
 
+### Nález po integraci: deadlock při současném zápisu
+
+Po sloučení PR #4 test souběhu při opakovaném spouštění občas selhal: 3 z 50 běhů (`test_concurrency_risk.py`). Příčina: když oba zápisy CONFIRMED proběhnou v tentýž okamžik, čekají při kontrole EXCLUDE constraintu jeden na druhý a PostgreSQL jeden z nich ukončí chybou `DeadlockDetected` (ne porušením constraintu). Invariant platil i v těchto bězích (CONFIRMED zůstala jedna), ale prohraný požadavek dostal neošetřenou chybu databáze místo `OverlapError`.
+
+| | Před opravou | Po opravě |
+|---|---|---|
+| `spike/tests/test_concurrency_risk.py`, 50 běhů | 47 passed, 3× `DeadlockDetected` | 50 passed |
+| `src/tests/test_deadlock.py` (deadlock vyvolaný deterministicky) | 10 z 10 selhalo (`DeadlockDetected`) | 100 z 100 prošlo |
+
+Oprava: po `DeadlockDetected` se zápis opakuje (nejvýše 3 pokusy s krátkou pauzou); opakovaný zápis už vidí výsledek druhé transakce a skončí `OverlapError` / `OVERLAP` (`spike/src/service.py`, `src/reservations/store.py`). Riziko je zapsané v ADR-01 mezi přijatými negativními důsledky.
+
 ## Evidence C02: specifikace → běžící aplikace
 
 **Přijatá baseline:** Specification Baseline v0.2 (v0.1 schválena před změnou). Doména a pravidla z C01: firemní nabíjecí stanice, zaměstnanci, Facility admin, Notification Service.

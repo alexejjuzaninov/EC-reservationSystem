@@ -310,6 +310,7 @@ Obě alternativy umí požadované chování realizovat. Rozdíl je v tom, co se
 - Změna pravidla znamená změnu kódu i schématu. Walking skeleton zatím nemá nástroj na migrace: schéma vytváří Reservation Store při startu (`create_all`), takže změna schématu nad existujícími daty znamená ruční zásah.
 - Vazba na PostgreSQL (`btree_gist`, `tstzrange`, `AT TIME ZONE`).
 - Prohraný souběžný požadavek se o konfliktu dozví až při zápisu; úložiště musí rozpoznat constraint podle názvu, jinak by volající dostal obecnou chybu databáze.
+- Zjištěno až při opakovaných bězích: když dva zápisy CONFIRMED proběhnou v tentýž okamžik, čekají při kontrole EXCLUDE constraintu jeden na druhý a PostgreSQL jeden z nich ukončí chybou `DeadlockDetected` místo porušení constraintu (spike 3 z 50 běhů). Invariant platí i tak (CONFIRMED zůstane jedna), ale úložiště musí zápis po deadlocku opakovat (nejvýše 3 pokusy s krátkou pauzou); opakovaný zápis už skončí porušením constraintu, tedy `OVERLAP`. Ověřuje deterministický test `src/tests/test_deadlock.py`.
 
 **Rozhodnutí znovu otevřeme, když:**
 

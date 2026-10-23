@@ -29,11 +29,11 @@ interface ReservationRepository {
   + get(reservation_id) : Reservation
   + station(station_id) : ChargingStation
   + relevant_for(reservation) : list[Reservation]
-  + save(reservation)
+  + save(reservation, expected)
 }
 
 class SqlReservationRepository <<Reservation Store>> {
-  + save(reservation)
+  + save(reservation, expected)
   - translate(IntegrityError) : AllocationConflict
 }
 

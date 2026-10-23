@@ -94,7 +94,7 @@ def test_save_reports_violated_invariant_as_allocation_conflict(system):  # ADR-
     other = repo.add(res(None, "alice", "AC-1", at("10:30"), at("11:30"), State.DRAFT))
     other.state = State.CONFIRMED
     with pytest.raises(AllocationConflict) as exc:
-        repo.save(other)
+        repo.save(other, expected=State.DRAFT)
     assert (exc.value.code, exc.value.related) == ("OVERLAP", [blocker.id])
     assert repo.get(other.id).state == State.DRAFT
 

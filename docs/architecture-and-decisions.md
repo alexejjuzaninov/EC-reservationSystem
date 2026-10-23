@@ -442,7 +442,7 @@ Odchylky od návrhu zjištěné při implementaci a jejich řešení:
 
 ### L1. Ověření chování
 
-`cd src && python -m pytest`: **66 passed** (PostgreSQL 16 v Dockeru, Python 3.12); z toho 54 testů z C03 níže a 12 unit/component testů z C05 DD (`src/tests/test_allocation_dd.py`).
+`cd src && python -m pytest`: **71 passed** (PostgreSQL 16 v Dockeru, Python 3.12); z toho 54 testů z C03 níže, 12 unit/component testů z C05 DD (`src/tests/test_allocation_dd.py`) a 5 testů serializace operací nad touž rezervací (`src/tests/test_serialization.py`, BR-03).
 
 | Ověření | Výsledek | Doklad |
 |---|---|---|
@@ -491,6 +491,7 @@ Proč tato jednotka: obsahuje hlavní logiku systému (BR-02, BR-04) a hlavní a
 | zapsat přechod do CONFIRMED tak, aby ze souběžných konfliktních zápisů prošel nejvýše jeden | REQ-04, ADR-01: poslední slovo má databáze |
 | převést porušení invariantu při zápisu na stejnou doménovou chybu jako u policy | volající nemá rozlišovat, kdo konflikt odhalil |
 | po deadlocku zápis zopakovat | dva současné zápisy může PostgreSQL ukončit deadlockem místo porušení constraintu |
+| zapsat nový stav jen tehdy, když je rezervace pořád ve stavu, ze kterého operace vyšla; jinak operaci zopakovat nad aktuálním stavem | BR-03: operace nad touž rezervací jsou serializované (např. Cancel → Confirm dá INVALID_STATE, ne CONFIRMED) |
 | odeslat e-mail až po zápisu a zapsat výsledek | REQ-09, DR3: e-mail nesmí určovat ani zdržovat výsledek |
 
 ### Design elements and ownership
@@ -524,14 +525,14 @@ check(candidate: Reservation, station: ChargingStation, others: Iterable[Reserva
 get(id) : Reservation | None
 station(id) : ChargingStation | None
 relevant_for(candidate) : List[Reservation]
-save(reservation) : None
+save(reservation, expected: State) : None
 ```
 
 | Contract `save()` | |
 |---|---|
-| Preconditions | rezervace existuje; `reservation.state` je nový stav |
-| Postconditions | nový stav je zapsaný a potvrzený (`COMMIT`); jiné spojení ho hned vidí |
-| Failures | porušení BR-02 nebo BR-04 v databázi → `AllocationConflict(OVERLAP / DAILY_LIMIT, related = konfliktní CONFIRMED)`, stav v databázi beze změny; `DeadlockDetected` → zápis se opakuje (nejvýše 3 pokusy, pauza 50 ms × pokus); jiná chyba databáze projde k volajícímu |
+| Preconditions | rezervace existuje; `reservation.state` je nový stav; `expected` je stav, ze kterého operace vyšla |
+| Postconditions | nový stav je zapsaný a potvrzený (`COMMIT`), jen pokud byl v databázi stav `expected`; jiné spojení ho hned vidí |
+| Failures | v databázi už je jiný stav → `StaleState`, nic se nezapíše (Reservation Management operaci zopakuje, nejvýše 3×, pak `INVALID_STATE`); porušení BR-02 nebo BR-04 → `AllocationConflict(OVERLAP / DAILY_LIMIT, related = konfliktní CONFIRMED)`, stav beze změny; `DeadlockDetected` → zápis se opakuje (nejvýše 3 pokusy, pauza 50 ms × pokus); jiná chyba databáze projde k volajícímu |
 
 Kontrakt `relevant_for`: vrací všechny CONFIRMED rezervace téže stanice **nebo** téhož uživatele, bez kandidáta. Je to přesně množina, kterou potřebuje `AllocationPolicy`; SQL implementace ji vrací jedním dotazem.
 
@@ -565,7 +566,7 @@ classDiagram
         +get(id) Reservation
         +station(id) ChargingStation
         +relevant_for(candidate) list
-        +save(reservation)
+        +save(reservation, expected)
     }
     class SqlReservationRepository {
         -_translate(IntegrityError, candidate) AllocationConflict
@@ -654,7 +655,7 @@ sequenceDiagram
 | Preconditions | platný interval kandidáta | volá ji jen `confirm()` / `approve()` po kontrolách | rezervace existuje | — |
 | Postconditions | viz kontrakt | úspěch: CONFIRMED zapsaná, jeden e-mail; neúspěch: stav v paměti i v DB beze změny, žádný e-mail | viz kontrakt `save()` | v logu přibyl jeden záznam SENT nebo FAILED |
 | Side effects | žádné | zápis přes repository, volání `Notifier` | `UPDATE` + `COMMIT` v PostgreSQL | volání Notification Service |
-| Failure behavior | žádné výjimky | `ReservationError`: INACTIVE_STATION, OVERLAP, DAILY_LIMIT (z policy nebo z `AllocationConflict`) | `AllocationConflict`; deadlock opakuje; jiná chyba DB projde | jakákoli výjimka služby → FAILED, k volajícímu nedoběhne |
+| Failure behavior | žádné výjimky | `ReservationError`: INACTIVE_STATION, OVERLAP, DAILY_LIMIT (z policy nebo z `AllocationConflict`); `StaleState` propustí k `@serialized`, který operaci zopakuje | `StaleState`; `AllocationConflict`; deadlock opakuje; jiná chyba DB projde | jakákoli výjimka služby → FAILED, k volajícímu nedoběhne |
 
 ### Algorithm / decision logic
 
@@ -683,13 +684,21 @@ _allocate(r):
     decision = policy.check(r, station(r), repository.relevant_for(r))
     if not decision.allowed:  raise ReservationError(decision.code, decision.related)
     previous = r.state;  r.state = CONFIRMED
-    try:    repository.save(r)                        # databáze může vetovat (ADR-01)
+    try:    repository.save(r, expected=previous)     # databáze může vetovat (ADR-01)
     except ReservationError:  r.state = previous;  raise
     notifier.send(...)                                # až po COMMIT
 
-save(r):
+confirm / approve / reject / cancel:                  # BR-03, dekorátor @serialized
     for attempt in 1..3:
-        UPDATE reservations SET state = r.state WHERE id = r.id;  COMMIT;  return
+        try:    přečti rezervaci, proveď kontroly, ulož přes save(r, expected=přečtený stav)
+        except StaleState:  pokračuj dalším pokusem (nové čtení uvidí výsledek souběžné operace)
+    raise ReservationError(INVALID_STATE)
+
+save(r, expected):
+    for attempt in 1..3:
+        UPDATE reservations SET state = r.state WHERE id = r.id AND state = expected
+        if žádný řádek:       ROLLBACK;  raise StaleState
+        COMMIT;  return
         on IntegrityError:    ROLLBACK
                               no_overlapping_confirmed    → raise AllocationConflict(OVERLAP, related)
                               one_confirmed_per_user_day  → raise AllocationConflict(DAILY_LIMIT, related)
@@ -709,6 +718,7 @@ save(r):
 | DD rozhodnutí v první verzi (aplikace C02) | Po C03 (`src/`) | Proč |
 |---|---|---|
 | souběh serializuje `threading.Lock` v procesu | invarianty BR-02 a BR-04 ve schématu PostgreSQL, zápis po deadlocku se opakuje | ADR-01; zámek neplatí mezi procesy |
+| zámek serializoval i operace nad touž rezervací (BR-03) | podmíněný zápis `save(r, expected)` a opakování operace při `StaleState` | doplněno po nálezu lost update (viz evidence C05); první verze `src/` serializaci BR-03 ztratila |
 | `ReservationRepository`: `get`, `add`, `all`, `relevant_for`; implementace v paměti | navíc `save()` (s kontraktem chyb) a `station()`; implementace `SqlReservationRepository` | DR2: trvalý stav; změna stavu se musí zapsat |
 | e-mail se připraví pod zámkem a odešle po jeho uvolnění (`_outbox`) | e-mail se odešle po `COMMIT` přes `NotificationIntegration` | DR3; transakce je krátká a e-mail ji nezdrží |
 | `AllocationPolicy`, `AllocationDecision` | beze změny | — |

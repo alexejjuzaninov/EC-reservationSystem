@@ -4,6 +4,7 @@ Vlastní všechny přechody stavů (C03 G3). Pravidla alokace vyhodnocuje Alloca
 invarianty BR-02 a BR-04 při souběhu zaručuje schéma databáze za ReservationRepository
 (ADR-01). Kontroly, kódy chyb a jejich pořadí jsou stejné jako v aplikaci C02 (reservation.py).
 """
+import functools
 from datetime import datetime
 from typing import Callable, List, Optional, Protocol
 
@@ -17,10 +18,13 @@ from .domain import (
     Reservation,
     ReservationError,
     Role,
+    StaleState,
     State,
     User,
     overlaps,
 )
+
+OPERATION_ATTEMPTS = 3  # operace se při souběžné změně téže rezervace opakuje (BR-03)
 
 SUBJECTS = {
     "CONFIRMED": "Rezervace {id} je potvrzená",
@@ -42,8 +46,11 @@ class ReservationRepository(Protocol):
         """Uloží novou rezervaci a vrátí ji s přiděleným id."""
         ...
 
-    def save(self, reservation: Reservation) -> None:
-        """Zapíše stav rezervace. Porušení BR-02 / BR-04 v databázi → AllocationConflict."""
+    def save(self, reservation: Reservation, expected: State) -> None:
+        """Zapíše stav rezervace, jen pokud je v úložišti pořád `expected`, jinak StaleState.
+
+        Porušení BR-02 / BR-04 v databázi → AllocationConflict.
+        """
         ...
 
     def relevant_for(self, candidate: Reservation) -> List[Reservation]:
@@ -61,6 +68,27 @@ class Notifier(Protocol):
     """Kontrakt Notification Integration: doručí e-mail; žádná chyba služby nedoběhne k volajícímu."""
 
     def send(self, to: str, subject: str, body: str) -> None: ...
+
+
+def serialized(operation):
+    """BR-03: operace nad rezervací se chovají, jako by běžely jedna po druhé.
+
+    Když úložiště při zápisu zjistí, že stav mezitím změnila jiná operace (StaleState), operace
+    se provede znovu od začátku nad aktuálním stavem; uvidí tak výsledek té dřívější.
+    """
+
+    @functools.wraps(operation)
+    def run(self, *args, **kwargs):
+        for attempt in range(1, OPERATION_ATTEMPTS + 1):
+            try:
+                return operation(self, *args, **kwargs)
+            except StaleState:
+                if attempt == OPERATION_ATTEMPTS:
+                    raise ReservationError(
+                        "INVALID_STATE", "Rezervaci mezitím změnila jiná operace, zkuste to znovu."
+                    ) from None
+
+    return run
 
 
 class ReservationService:
@@ -114,6 +142,7 @@ class ReservationService:
         return "AVAILABLE"
 
     # ---- OP-03 Confirm Reservation (REQ-03, REQ-03b, REQ-04) -----------------
+    @serialized
     def confirm(self, user_id: str, reservation_id: int) -> Reservation:
         self.repository.expire_pending(self.now())
         self._require_role(user_id, Role.EMPLOYEE)
@@ -129,11 +158,12 @@ class ReservationService:
         if self._get_station(reservation.station_id).requires_approval:
             # v0.2 (REQ-03b, BR-05): jen žádost o schválení, stanice se ještě neblokuje
             reservation.state = State.PENDING_APPROVAL
-            self.repository.save(reservation)
+            self.repository.save(reservation, expected=State.DRAFT)
             return reservation
         return self._allocate(reservation)
 
     # ---- OP-05 Approve / Reject Reservation (v0.2: REQ-06, REQ-07, REQ-08) ---
+    @serialized
     def approve(self, user_id: str, reservation_id: int) -> Reservation:
         self.repository.expire_pending(self.now())
         self._require_role(user_id, Role.ADMIN)
@@ -141,17 +171,19 @@ class ReservationService:
         self._require_pending(reservation)
         return self._allocate(reservation)
 
+    @serialized
     def reject(self, user_id: str, reservation_id: int) -> Reservation:
         self.repository.expire_pending(self.now())
         self._require_role(user_id, Role.ADMIN)
         reservation = self._get_reservation(reservation_id)
         self._require_pending(reservation)
         reservation.state = State.REJECTED
-        self.repository.save(reservation)
+        self.repository.save(reservation, expected=State.PENDING_APPROVAL)
         self._notify(reservation, "REJECTED")
         return reservation
 
     # ---- OP-04 Cancel Reservation (REQ-05) -----------------------------------
+    @serialized
     def cancel(self, user_id: str, reservation_id: int) -> Reservation:
         self.repository.expire_pending(self.now())
         user = self._require_user(user_id)
@@ -166,8 +198,9 @@ class ReservationService:
             )
         if not self.now() < reservation.start_time:
             raise ReservationError("TOO_LATE", "Zrušit lze jen před začátkem rezervace (BR-03).")
+        previous = reservation.state
         reservation.state = State.CANCELLED
-        self.repository.save(reservation)
+        self.repository.save(reservation, expected=previous)
         self._notify(reservation, "CANCELLED")
         return reservation
 
@@ -188,7 +221,9 @@ class ReservationService:
         previous = reservation.state
         reservation.state = State.CONFIRMED
         try:
-            self.repository.save(reservation)  # souběžný konflikt odmítne databáze (ADR-01)
+            # souběžná změna téže rezervace → StaleState (BR-03); konflikt s jinou rezervací
+            # odmítne databáze (ADR-01)
+            self.repository.save(reservation, expected=previous)
         except ReservationError:
             reservation.state = previous
             raise

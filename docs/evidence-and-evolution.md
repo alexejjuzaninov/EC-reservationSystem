@@ -208,7 +208,7 @@ Podrobnosti jsou v `docs/architecture-and-decisions.md`, části C03 A–L.
 
 **Implementation changes:** walking skeleton `src/` (FastAPI + SQLAlchemy + PostgreSQL), pět modulů podle G2, závislosti připnuté na verze starší dvou týdnů (`src/requirements.txt`). Po implementaci nalezen a opraven deadlock při současném zápisu (viz evidence C01, nález po integraci).
 
-**Behaviour verification:** `cd src && python -m pytest` → 66 passed, z toho 54 testů C03: walking skeleton (2), 40 příkladů ověření C02 přes HTTP se shodnými názvy, souběh BR-02 a BR-04, invarianty v DB (4), deadlock (1), notifikace (2), architektura (4). U testů souběhu, invariantů, deadlocku a notifikací ověřeno, že při odebrané ochraně selžou. Skutečný server:
+**Behaviour verification:** `cd src && python -m pytest` → 71 passed, z toho 54 testů C03: walking skeleton (2), 40 příkladů ověření C02 přes HTTP se shodnými názvy, souběh BR-02 a BR-04, invarianty v DB (4), deadlock (1), notifikace (2), architektura (4). U testů souběhu, invariantů, deadlocku a notifikací ověřeno, že při odebrané ochraně selžou. Skutečný server:
 
 ```text
 $ uvicorn reservations.main:app        (DATABASE_URL = PostgreSQL ze spike C01)
@@ -256,6 +256,10 @@ DD popisuje jednotku přidělení stanice ve walking skeletonu `src/` (po C03). 
 | failure behavior Notifieru | jakákoli výjimka služby → CONFIRMED, FAILED, volající chybu nedostane | component | `test_notifications.py::test_unexpected_notification_error_does_not_reach_caller` |
 | concurrency REQ-04 | dvě souběžná konfliktní potvrzení → právě jedno CONFIRMED (BR-02 i BR-04) | integration (HTTP + PostgreSQL) | `test_op03_concurrent_confirmations`, `test_concurrency.py` |
 | collaboration: jedno místo pravidla | Confirm i Approve volají stejnou policy | component | `test_approve_uses_the_same_policy` |
+| kontrakt `save(r, expected)` | zápis ze zastaralého stavu → `StaleState`, nic se nezapíše | component (PostgreSQL) | `src/tests/test_serialization.py::test_save_from_stale_state_is_refused_and_changes_nothing` |
+| serializace BR-03: Cancel → Confirm / Approve | pozdější operace vidí CANCELLED → `INVALID_STATE`, stav zůstane CANCELLED, jeden e-mail | component (dvě vlákna, PostgreSQL) | `test_cancel_written_first_then_confirm_sees_cancelled`, `test_cancel_written_first_then_approve_sees_cancelled` |
+| serializace BR-03: Confirm → Cancel | zrušení potvrzené rezervace dál funguje | component | `test_confirm_written_first_then_cancel_cancels_confirmed` |
+| serializace BR-03: Approve → Reject | o žádosti se rozhodne jednou, zamítnutí po schválení → `INVALID_STATE` | component | `test_approve_written_first_then_reject_sees_confirmed` |
 
 **Zdůvodnění úrovně u vybraných testů:**
 
@@ -279,7 +283,7 @@ $ cd src && python -m pytest tests/test_allocation_dd.py
 12 passed
 
 $ cd src && python -m pytest
-66 passed
+71 passed
 
 $ python -m unittest discover -s tests          (první verze DD, aplikace C02)
 Ran 13 tests ... OK
@@ -288,7 +292,15 @@ $ python tools/mutation_check.py
 7/7 mutací zabito.
 ```
 
-Kontrola, že testy rozhodnutí DD opravdu hlídají (dočasná kopie `src/`, repozitář beze změny): e-mail odeslaný před zápisem → selžou `test_slow_notification_…` a `test_email_is_sent_only_after_state_is_committed`; bez opakování po deadlocku → `test_deadlock.py` selže 10 z 10; bez constraintů z ADR-01 → selžou testy souběhu.
+Kontrola, že testy rozhodnutí DD opravdu hlídají (dočasná kopie `src/`, repozitář beze změny): e-mail odeslaný před zápisem → selžou `test_slow_notification_…` a `test_email_is_sent_only_after_state_is_committed`; bez opakování po deadlocku → `test_deadlock.py` selže 10 z 10; bez constraintů z ADR-01 → selžou testy souběhu; `save()` bez podmínky na původní stav → 4 z 5 testů v `test_serialization.py` selžou ve 3 ze 3 běhů (pátý, Confirm → Cancel, je povolené pořadí a projde s opravou i bez ní).
+
+### Nález po C03: lost update při souběhu operací nad touž rezervací
+
+BR-03 ve specifikaci říká, že operace nad rezervací jsou serializované: „Confirm then Cancel gives CANCELLED; Cancel then Confirm gives INVALID_STATE“. Aplikace C02 to zajišťovala zámkem `threading.Lock`; walking skeleton zámek podle ADR-01 nahradil invarianty v databázi, ty ale hlídají jen vztahy mezi různými rezervacemi (BR-02, BR-04), ne přechody jedné rezervace. `save()` zapisoval nový stav bez podmínky na ten původní.
+
+Pozorováno (dočasný test, dvě operace přečtou stejný stav, než kterákoli zapíše): když Cancel zapsal první a Confirm druhý, oba volající dostali úspěch (`CANCELLED` i `CONFIRMED`), odešly oba e-maily a v databázi zůstalo CONFIRMED, i když uživatel dostal potvrzení o zrušení. Stejně Approve a Reject téže žádosti uspěly oba. Při první analýze jsme za doklad nejdřív považovali i opačné pořadí (Confirm zapsal první, Cancel druhý); ten výsledek ale odpovídá dovolenému pořadí Confirm → Cancel, proto testy pořadí zápisu určují explicitně.
+
+Oprava: `save(r, expected)` zapíše jen tehdy, když je v databázi pořád stav `expected` (`UPDATE … WHERE id = … AND state = expected`), jinak vyhodí `StaleState`; Reservation Management operaci zopakuje od načtení (dekorátor `@serialized`, nejvýše 3 pokusy). Pozdější operace tak vidí výsledek dřívější, jak BR-03 požaduje. Ověřují to `src/tests/test_serialization.py` (5 testů, 20 z 20 běhů s opravou, bez opravy 4 selžou pokaždé).
 
 **Design ↔ implementation mismatch:**
 
@@ -299,16 +311,17 @@ Kontrola, že testy rozhodnutí DD opravdu hlídají (dočasná kopie `src/`, re
 | service závisí jen na kontraktech `ReservationRepository` a `Notifier` | YES | `src/tests/test_architecture.py` | keep |
 | `save()` převede porušení invariantu na `AllocationConflict` se stejnými kódy | YES | `SqlReservationRepository._translate()`; `test_save_reports_…` | keep |
 | `save()` po deadlocku opakuje zápis | YES, doplněno po nálezu | `SqlReservationRepository.save()`; `test_deadlock.py` | update DD i kód (provedeno) |
+| operace nad touž rezervací jsou serializované (BR-03) | YES, doplněno po nálezu lost update | `save(r, expected)`, `@serialized`; `test_serialization.py` | update DD i kód (provedeno) |
 | e-mail až po `COMMIT`, jakákoli chyba → FAILED | YES | `_allocate()`, `NotificationIntegration`; 3 testy | keep |
 | kontrakt `ReservationRepository` v DD | PARTLY, záměrně | kód má navíc `user()`, `add()`, `confirmed_for_station()`, `expire_pending()` pro ostatní operace | keep: DD popisuje jen část potřebnou pro přidělení |
 | (první verze) souběh hlídá jeden zámek v procesu | nahrazeno | ADR-01 | vyřešeno v C03 |
 
-**Resolution:** kód realizuje DD; jediná změna DD vznikla z nálezu (opakování po deadlocku) a je zapsaná v DD, v ADR-01 i v evidence C01. Rozdíl v šíři kontraktu úložiště je vědomý.
+**Resolution:** kód realizuje DD; změny DD vznikly ze dvou nálezů (opakování po deadlocku; serializace BR-03 podmíněným zápisem) a jsou zapsané v DD i v evidence. Rozdíl v šíři kontraktu úložiště je vědomý.
 
 **Remaining design risk:**
 
 - log notifikací je jen v paměti procesu a nedoručené e-maily se znovu neposílají (TBD-02);
-- při velmi silném souběhu by tři pokusy po deadlocku nemusely stačit a volající by dostal chybu databáze (při testech nepozorováno);
+- při velmi silném souběhu by tři pokusy po deadlocku nemusely stačit a volající by dostal chybu databáze (při testech nepozorováno); stejně tak tři opakování operace při `StaleState` skončí `INVALID_STATE`;
 - webová ukázka `app/index.html` je kopie pravidel C02 (driver D5).
 
 **Commit/tag:** první verze DD `0686cde` (tag `c05-detailed-design`); aktualizace po C03 je součástí stavu označeného tagem `c03-architecture`.

@@ -255,7 +255,7 @@ Pravidla platí ve schématu databáze bez ohledu na to, která část kódu zap
 | DR1 souběh: BR-04 | nutné zamknout i řádek uživatele, a to vždy ve stejném pořadí jako stanici (jinak hrozí deadlock); dvě stanice + stejný uživatel se seřadí na řádku uživatele | potřebuje druhý constraint: unikátní částečný index `(user_id, ((start_time AT TIME ZONE 'UTC')::date)) WHERE state = 'CONFIRMED'`; ověřeno v PostgreSQL 16 (viz pod tabulkou) |
 | vlastnictví a změna pravidla (R4) | pravidlo na jednom místě (Python); změna, např. dvě rezervace za den, je jen změna kódu | pravidlo na dvou místech: význam v `AllocationPolicy`, záruka ve schématu; změna pravidla = změna kódu i migrace schématu a obě se musí shodovat; některá pravidla (kapacita stanice > 1) EXCLUDE nevyjádří |
 | chování při selhání | prohraný požadavek čeká na zámek, pak dostane srozumitelný `OVERLAP` z Pythonu; riziko deadlocku nebo vypršení zámku při špatném pořadí | prohraný požadavek dostane chybu databáze při zápisu a service ji musí podle názvu constraintu převést na `OVERLAP` / `DAILY_LIMIT` (spike to už dělá pro BR-02) |
-| DR2 / provozní složitost | standardní SQL; zámek se drží po dobu transakce, takže v ní nesmí být nic pomalého (e-mail, DR3) | závislost na funkcích PostgreSQL (`btree_gist`, `tstzrange`); žádné ruční zámky ani řazení; constrainty jsou součást migrací schématu |
+| DR2 / provozní složitost | standardní SQL; zámek se drží po dobu transakce, takže v ní nesmí být nic pomalého (e-mail, DR3) | závislost na funkcích PostgreSQL (`btree_gist`, `tstzrange`); žádné ruční zámky ani řazení; constrainty jsou součást schématu databáze |
 
 Ověření indexu pro BR-04 (PostgreSQL 16 v Dockeru, dočasná tabulka v transakci s `ROLLBACK`):
 
@@ -307,7 +307,7 @@ Obě alternativy umí požadované chování realizovat. Rozdíl je v tom, co se
 **Přijaté negativní důsledky:**
 
 - Pravidla BR-02 a BR-04 jsou na dvou místech (`AllocationPolicy` a schéma). Shodu musí hlídat testy: stejné hraniční případy (navazující interval, překryv, den v UTC) musí odmítnout policy i databáze.
-- Změna pravidla znamená změnu kódu i migraci schématu.
+- Změna pravidla znamená změnu kódu i schématu. Walking skeleton zatím nemá nástroj na migrace: schéma vytváří Reservation Store při startu (`create_all`), takže změna schématu nad existujícími daty znamená ruční zásah.
 - Vazba na PostgreSQL (`btree_gist`, `tstzrange`, `AT TIME ZONE`).
 - Prohraný souběžný požadavek se o konfliktu dozví až při zápisu; úložiště musí rozpoznat constraint podle názvu, jinak by volající dostal obecnou chybu databáze.
 

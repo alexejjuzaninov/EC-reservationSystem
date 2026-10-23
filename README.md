@@ -21,9 +21,13 @@ Firemní nabíjecí stanice pro elektromobily jsou omezený zdroj. Zaměstnanec 
 | C02 | specifikace v0.1 a v0.2, diagramy, rozhodnutí týmu | [`docs/specification.md`](docs/specification.md) |
 | C02 | běžící aplikace a příklady ověření | [`reservation.py`](reservation.py), webová ukázka [`app/index.html`](app/index.html) |
 | C02 | evidence specifikace → aplikace | [`docs/evidence-and-evolution.md`](docs/evidence-and-evolution.md), část Evidence C02 |
-| C03 | část A: AS-IS trace scénáře Confirm | [`docs/architecture-and-decisions.md`](docs/architecture-and-decisions.md), část C03 |
-| C05 | Detailed Design | [`docs/architecture-and-decisions.md`](docs/architecture-and-decisions.md), část C05 |
-| C05 | unit/component testy odvozené z DD | [`tests/test_allocation.py`](tests/test_allocation.py) |
+| C03 | část A (AS-IS), drivery, ADR-01, pohledy G a H, cross-view kontrola, delta, ověření | [`docs/architecture-and-decisions.md`](docs/architecture-and-decisions.md), části C03 |
+| C03 | diagramy architektury (zdroje `.puml`) | [`docs/diagrams/`](docs/diagrams/), soubory `c03-*` |
+| C03 | walking skeleton (FastAPI + PostgreSQL) a jeho testy | [`src/`](src/) |
+| C03 | evidence architektury | [`docs/evidence-and-evolution.md`](docs/evidence-and-evolution.md), část C03 |
+| C04 | samostatné zadání nebylo (cvičení věnována C03) | [`docs/evidence-and-evolution.md`](docs/evidence-and-evolution.md), část C04 |
+| C05 | Detailed Design (jednotka přidělení stanice v `src/`) | [`docs/architecture-and-decisions.md`](docs/architecture-and-decisions.md), část C05 |
+| C05 | unit/component testy odvozené z DD | [`src/tests/test_allocation_dd.py`](src/tests/test_allocation_dd.py); první verze nad aplikací C02 [`tests/test_allocation.py`](tests/test_allocation.py) |
 | C05 | evidence DD | [`docs/evidence-and-evolution.md`](docs/evidence-and-evolution.md), část C05 |
 | C02, C05 | mutační kontrola testů | [`tools/mutation_check.py`](tools/mutation_check.py) |
 | C01 | odevzdaný dokument | [`docs/SWI-C01-reservation-system.pdf`](docs/SWI-C01-reservation-system.pdf) |
@@ -35,7 +39,7 @@ Aplikace C02 potřebuje jen Python 3.10 nebo novější, žádné další balí�
 ```bash
 python reservation.py test                  # 40 příkladů ověření ze specifikace, výsledek PASS/FAIL
 python reservation.py demo                  # krátká ukázka všech operací
-python -m unittest discover -s tests -v     # 13 unit/component testů z Detailed Design (C05)
+python -m unittest discover -s tests -v     # 13 testů první verze C05 DD nad aplikací C02
 python tools/mutation_check.py              # ověří, že testy odhalí 7 záměrně pokažených pravidel
 ```
 
@@ -69,6 +73,25 @@ python3 -m venv .venv
 ```
 
 Očekávaný výsledek: `4 passed`. Po restartu počítače stačí databázi znovu spustit příkazem `docker start swi-db`.
+
+### Walking skeleton (C03, složka `src/`)
+
+Používá stejnou databázi `swi-db` jako spike; testovací databázi `reservations_app_test` si testy vytvoří samy. Windows (PowerShell):
+
+```powershell
+cd src
+py -3.12 -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python -m pytest                              # očekáváno: 66 passed
+.venv\Scripts\python -m uvicorn reservations.main:app       # server na http://127.0.0.1:8000, dokumentace API na /docs
+```
+
+Linux / macOS: totéž s `python3 -m venv .venv` a `.venv/bin/python`. Server používá databázi `reservations` (proměnná `DATABASE_URL`) a při startu si vytvoří tabulky a ukázková data (alice, bob, admin; AC-1, DC-1, AC-2). Uživatel se předává hlavičkou `X-User-Id`, například:
+
+```bash
+curl -X POST http://127.0.0.1:8000/reservations -H "X-User-Id: alice" -H "Content-Type: application/json" \
+     -d '{"station_id": "AC-1", "start_time": "2027-03-01T10:00:00Z", "end_time": "2027-03-01T11:00:00Z"}'
+```
 
 ## Co systém dělá
 
@@ -112,10 +135,10 @@ Plné znění Project Frame a future pressure je v [`docs/intent-and-change.md`]
 | Krok | Provedení |
 |---|---|
 | Issue | [#3 C01 engineering spike](https://github.com/alexejjuzaninov/EC-reservationSystem/issues/3): vynutit BR-02 i při souběhu |
-| Autor změny | Aleksej Južaninov, větev `c01-db-overlap-constraint` (commity `238e8ce`, `a809456`) |
+| Autor změny | Viacheslav Zlobin, commity `6185d77`, `8639309` ve větvi `c01-db-overlap-constraint`; PR otevřel Aleksej Južaninov |
 | Reviewer | Maksym Panfilov (GitHub `Makusu1`), [Pull Request #4](https://github.com/alexejjuzaninov/EC-reservationSystem/pull/4), stav Approved před mergem |
 | Obsah review | spike spuštěn lokálně (Docker Desktop, PostgreSQL 16, Python 3.13): `4 passed`; po dočasném zakomentování EXCLUDE constraintu 2 failed (`assert 2 == 1`, `DID NOT RAISE IntegrityError`), po vrácení opět `4 passed`; navazující interval projde |
-| Integrace | PR #4 sloučen do `main` merge commitem `ac72d92`, issue #3 se tím uzavřel |
+| Integrace | PR #4 sloučen do `main` merge commitem `fd727bf`, issue #3 se tím uzavřel |
 
 ### Engineering spike: varianta A (persistence)
 
@@ -127,7 +150,7 @@ Otázka, postup, pozorovaný výsledek, rozhodnutí, výstup `pytest` po změně
 
 ### Walking skeleton pro CP1
 
-Definice z C01. Spustitelný musí být až po C03, před C04:
+Definice z C01, spustitelná po C03:
 
 ```text
 POST /reservations
@@ -137,7 +160,7 @@ POST /reservations
   → automated check (pytest: POST vrátí 201 a ID, záznam je v DB)
 ```
 
-Cesta je záměrně tenká: jeden endpoint, jedna tabulka, jeden automatický test. Aplikace C02 (`reservation.py`) je zatím záměrně jednoduchá a běží jen v paměti; v C03 se její chování přenese do této kostry.
+Stav: **implementováno** ve složce `src/` (C03). Automatická kontrola je `src/tests/test_walking_skeleton.py`; spuštění viz [Rychlý start](#walking-skeleton-c03-složka-src). Skeleton nakonec obsahuje všech pět operací z C02, nejen `POST /reservations`, se stejnými 40 příklady ověření. Architektura a ADR-01 jsou v `docs/architecture-and-decisions.md`. Aplikace C02 (`reservation.py`) zůstává jako zmrazený artefakt C02.
 
 ### Rozhodnutí o stacku
 

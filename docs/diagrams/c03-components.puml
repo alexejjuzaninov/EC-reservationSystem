@@ -1,0 +1,36 @@
+@startuml c03-components
+title TO-BE statická architektura (C03 G2)
+skinparam componentStyle uml2
+
+actor "Zaměstnanec /\nFacility admin" as user
+
+package "Rezervační systém nabíjecích stanic" {
+  component "Reservation API\n<<FastAPI>>\n--\nR1: HTTP, validace vstupu" as API
+  component "Reservation Management\n--\nR2, R3, R7: oprávnění, životní cyklus, vypršení\nowns: životní cyklus rezervace (všechny přechody)" as RM
+  component "Allocation Policy\n--\nR4: provoz stanice, BR-02, BR-04\n(čistá funkce, nic neukládá)" as AP
+  component "Reservation Store\n<<SQLAlchemy>>\n--\nR5, R6: trvalý stav\nowns: rezervace, invarianty BR-02 a BR-04 ve schématu (ADR-01)" as RS
+  component "Notification Integration\n--\nR8: doručení, záznam SENT / FAILED\nowns: log notifikací" as NI
+  interface "ReservationRepository" as IRepo
+  interface "Notifier" as INot
+}
+
+database "PostgreSQL" as DB
+rectangle "Notification Service\n<<externí systém>>" as NS
+
+user --> API : HTTP požadavky
+API --> RM : create / check_availability / confirm /\ncancel / approve / reject
+RM --> AP : check(kandidát, stanice, CONFIRMED rezervace)
+RM --> IRepo : get / add / save / relevant_for
+RS -up- IRepo
+RM --> INot : send() až po COMMIT
+NI -up- INot
+RS --> DB : SQL
+NI --> NS : e-mail
+
+note right of DB
+  ADR-01: EXCLUDE no_overlapping_confirmed (BR-02),
+  UNIQUE one_confirmed_per_user_day (BR-04);
+  porušení převede Reservation Store
+  na OVERLAP / DAILY_LIMIT
+end note
+@enduml

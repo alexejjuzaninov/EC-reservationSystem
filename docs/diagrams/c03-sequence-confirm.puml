@@ -1,0 +1,46 @@
+@startuml c03-sequence-confirm
+title Návrhový sekvenční diagram: OP-03 Confirm Reservation (C03 H1)
+autonumber
+
+actor "Zaměstnanec" as emp
+participant "Reservation API" as API
+participant "Reservation\nManagement" as RM
+participant "Allocation\nPolicy" as AP
+participant "Reservation\nStore" as RS
+database "PostgreSQL" as DB
+participant "Notification\nIntegration" as NI
+participant "Notification\nService" as NS
+
+emp -> API : POST /reservations/{id}/confirm
+API -> RM : confirm(user_id, reservation_id)
+RM -> RS : get(reservation_id), station(station_id)
+RS -> DB : SELECT
+RM -> RM : vypršení žádostí (BR-06); oprávnění, stav DRAFT, now < start\n(jinak UNAUTHORIZED / INVALID_STATE / TOO_LATE)
+RM -> RS : relevant_for(X)
+RS -> DB : SELECT CONFIRMED téže stanice nebo téhož uživatele
+RM -> AP : check(X, stanice, CONFIRMED rezervace)
+alt podmínky nesplněny (sekvenční konflikt)
+  AP --> RM : deny(INACTIVE_STATION / OVERLAP / DAILY_LIMIT)
+  RM --> API : ReservationError(kód), X zůstává DRAFT
+  API --> emp : 409 {code}
+else podmínky splněny
+  AP --> RM : allow
+  RM -> RS : save(X, state = CONFIRMED)
+  RS -> DB : UPDATE state = 'CONFIRMED'; COMMIT
+  alt zápis prošel
+    DB --> RS : OK
+    RS --> RM : OK
+    RM -> NI : send(vlastník, "potvrzeno")
+    NI -> NS : e-mail
+    NI --> RM : záznam SENT / FAILED (výsledek nemění, REQ-09)
+    RM --> API : X ve stavu CONFIRMED
+    API --> emp : 200 {id, state: CONFIRMED}
+  else souběžné potvrzení zapsáno dřív (ADR-01)
+    DB --> RS : porušení no_overlapping_confirmed\nnebo one_confirmed_per_user_day
+    RS -> DB : ROLLBACK
+    RS --> RM : AllocationConflict(OVERLAP / DAILY_LIMIT)
+    RM --> API : ReservationError(kód), X zůstává DRAFT
+    API --> emp : 409 {code}
+  end
+end
+@enduml

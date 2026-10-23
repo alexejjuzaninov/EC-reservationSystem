@@ -1,0 +1,76 @@
+@startuml c03-design-classes
+title Zaměřený návrhový třídní diagram: Confirm / Approve (C03 H2)
+skinparam classAttributeIconSize 0
+hide empty members
+
+class "reservations_api" as API <<module, Reservation API>> {
+  + confirm_endpoint(id, user) : ReservationOut
+  + approve_endpoint(id, user) : ReservationOut
+}
+
+class ReservationService <<Reservation Management>> {
+  + confirm(user_id, reservation_id) : Reservation
+  + approve(user_id, reservation_id) : Reservation
+  - expire_overdue()
+  - check_allocation(reservation)
+}
+
+class AllocationPolicy <<Allocation Policy>> {
+  + check(candidate, station, others) : AllocationDecision
+}
+
+class AllocationDecision <<value object>> {
+  allowed : bool
+  code : str
+  related : tuple
+}
+
+interface ReservationRepository {
+  + get(reservation_id) : Reservation
+  + station(station_id) : ChargingStation
+  + relevant_for(reservation) : list[Reservation]
+  + save(reservation)
+}
+
+class SqlReservationRepository <<Reservation Store>> {
+  + save(reservation)
+  - translate(IntegrityError) : AllocationConflict
+}
+
+interface Notifier {
+  + send(to, subject, body)
+}
+
+class NotificationIntegration <<Notification Integration>> {
+  + send(to, subject, body)
+  - log : list  (SENT / FAILED)
+}
+
+class Reservation <<entity>> {
+  id
+  user_id
+  station_id
+  start_time
+  end_time
+  state : ReservationState
+}
+
+class ReservationError <<exception>> {
+  code : str
+  related : list
+}
+
+class AllocationConflict <<exception>>
+
+API --> ReservationService : volá
+ReservationService --> AllocationPolicy : check()
+ReservationService --> ReservationRepository : get / relevant_for / save
+ReservationService --> Notifier : send() po COMMIT
+ReservationService ..> Reservation : mění state
+AllocationPolicy ..> AllocationDecision : vrací
+ReservationRepository <|.. SqlReservationRepository
+Notifier <|.. NotificationIntegration
+SqlReservationRepository ..> AllocationConflict : vyhodí při porušení\nconstraintu (ADR-01)
+ReservationError <|-- AllocationConflict
+ReservationService ..> ReservationError : vyhodí
+@enduml

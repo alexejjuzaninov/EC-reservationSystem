@@ -3,13 +3,17 @@
 Pravidlo C01: potvrzené rezervace téže stanice se nesmějí překrývat. Kontrola běží při
 potvrzení, ne při vytvoření (DRAFT je jen záměr). Intervaly jsou polootevřené [start, end).
 """
+import time
 from datetime import datetime
 
+from psycopg.errors import DeadlockDetected
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from .models import NO_OVERLAP_CONSTRAINT, Reservation, ReservationState
+
+COMMIT_ATTEMPTS = 3
 
 
 class OverlapError(Exception):
@@ -37,14 +41,24 @@ class ReservationService:
             raise OverlapError("Station already has a CONFIRMED reservation in this time range")
         # 2) Autoritativní kontrola: EXCLUDE constraint v PostgreSQL. Platí i při souběhu,
         #    kdy oba požadavky v kroku 1 viděly "bez konfliktu".
-        reservation.state = ReservationState.CONFIRMED
-        try:
-            self.session.commit()
-        except IntegrityError as exc:
-            self.session.rollback()
-            if getattr(getattr(exc.orig, "diag", None), "constraint_name", None) == NO_OVERLAP_CONSTRAINT:
-                raise OverlapError("Station already has a CONFIRMED reservation in this time range") from exc
-            raise
+        for attempt in range(1, COMMIT_ATTEMPTS + 1):
+            reservation.state = ReservationState.CONFIRMED
+            try:
+                self.session.commit()
+                return reservation
+            except IntegrityError as exc:
+                self.session.rollback()
+                if getattr(getattr(exc.orig, "diag", None), "constraint_name", None) == NO_OVERLAP_CONSTRAINT:
+                    raise OverlapError("Station already has a CONFIRMED reservation in this time range") from exc
+                raise
+            except OperationalError as exc:
+                # Dva současné zápisy mohou při kontrole constraintu čekat jeden na druhý a PostgreSQL
+                # jeden z nich ukončí deadlockem. Opakovaný zápis už uvidí výsledek druhého.
+                self.session.rollback()
+                if not isinstance(exc.orig, DeadlockDetected) or attempt == COMMIT_ATTEMPTS:
+                    raise
+                time.sleep(0.05 * attempt)
+                reservation = self.session.get(Reservation, reservation_id)
         return reservation
 
     def _find_overlapping(self, reservation: Reservation) -> list[Reservation]:

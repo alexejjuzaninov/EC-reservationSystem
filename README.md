@@ -32,6 +32,8 @@ Firemní nabíjecí stanice pro elektromobily jsou omezený zdroj. Zaměstnanec 
 | C02, C05 | mutační kontrola testů | [`tools/mutation_check.py`](tools/mutation_check.py) |
 | C01 | odevzdaný dokument | [`docs/SWI-C01-reservation-system.pdf`](docs/SWI-C01-reservation-system.pdf) |
 
+Verze k hodnocení v C06: tag [`c06-baseline`](https://github.com/alexejjuzaninov/EC-reservationSystem/tree/c06-baseline). Dokumentace, kód i testy v ní patří k sobě.
+
 ## Rychlý start
 
 Aplikace C02 potřebuje jen Python 3.10 nebo novější, žádné další balíčky. Na Windows místo `python` použijte spouštěč `py`:

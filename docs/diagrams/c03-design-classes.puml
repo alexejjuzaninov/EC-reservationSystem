@@ -3,16 +3,15 @@ title Zaměřený návrhový třídní diagram: Confirm / Approve (C03 H2)
 skinparam classAttributeIconSize 0
 hide empty members
 
-class "reservations_api" as API <<module, Reservation API>> {
-  + confirm_endpoint(id, user) : ReservationOut
-  + approve_endpoint(id, user) : ReservationOut
+class "reservations.api" as API <<module, Reservation API>> {
+  + confirm_reservation(reservation_id, x_user_id) : ReservationOut
+  + approve_reservation(reservation_id, x_user_id) : ReservationOut
 }
 
 class ReservationService <<Reservation Management>> {
-  + confirm(user_id, reservation_id) : Reservation
-  + approve(user_id, reservation_id) : Reservation
-  - expire_overdue()
-  - check_allocation(reservation)
+  + confirm(user_id, reservation_id) : Reservation  «@serialized»
+  + approve(user_id, reservation_id) : Reservation  «@serialized»
+  - _allocate(reservation) : Reservation
 }
 
 class AllocationPolicy <<Allocation Policy>> {
@@ -26,6 +25,8 @@ class AllocationDecision <<value object>> {
 }
 
 interface ReservationRepository {
+  + expire_pending(now)
+  + user(user_id) : User
   + get(reservation_id) : Reservation
   + station(station_id) : ChargingStation
   + relevant_for(reservation) : list[Reservation]
@@ -34,7 +35,7 @@ interface ReservationRepository {
 
 class SqlReservationRepository <<Reservation Store>> {
   + save(reservation, expected)
-  - translate(IntegrityError) : AllocationConflict
+  - _translate(IntegrityError, reservation) : AllocationConflict
 }
 
 interface Notifier {
@@ -52,7 +53,7 @@ class Reservation <<entity>> {
   station_id
   start_time
   end_time
-  state : ReservationState
+  state : State
 }
 
 class ReservationError <<exception>> {
@@ -62,15 +63,19 @@ class ReservationError <<exception>> {
 
 class AllocationConflict <<exception>>
 
+class StaleState <<exception>>
+
 API --> ReservationService : volá
 ReservationService --> AllocationPolicy : check()
-ReservationService --> ReservationRepository : get / relevant_for / save
+ReservationService --> ReservationRepository : expire_pending / user / get /\nstation / relevant_for / save
 ReservationService --> Notifier : send() po COMMIT
 ReservationService ..> Reservation : mění state
 AllocationPolicy ..> AllocationDecision : vrací
 ReservationRepository <|.. SqlReservationRepository
 Notifier <|.. NotificationIntegration
 SqlReservationRepository ..> AllocationConflict : vyhodí při porušení\nconstraintu (ADR-01)
+SqlReservationRepository ..> StaleState : vyhodí, když stav\nnení expected (BR-03)
 ReservationError <|-- AllocationConflict
 ReservationService ..> ReservationError : vyhodí
+ReservationService ..> StaleState : zachytí @serialized,\noperaci zopakuje
 @enduml

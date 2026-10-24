@@ -367,7 +367,7 @@ Všech pět logických prvků běží v jednom procesu (FastAPI pod uvicorn). Po
 
 ![Návrhový sekvenční diagram Confirm](diagrams/c03-sequence-confirm.svg)
 
-Stejný scénář jako v části A (Confirm na stanici bez schválení), teď v TO-BE architektuře. Vnější `alt` je sekvenční konflikt, který odhalí Allocation Policy. Vnitřní `alt` je souběh z DR1: Allocation Policy konflikt neviděla, protože druhé potvrzení ještě nebylo zapsané, a zápis odmítne až PostgreSQL (ADR-01). Volající dostane v obou případech stejnou odpověď `409` se stejným kódem. E-mail se posílá až po úspěšném `COMMIT`.
+Stejný scénář jako v části A (Confirm na stanici bez schválení), teď v TO-BE architektuře. Vnější `alt` je sekvenční konflikt, který odhalí Allocation Policy. Vnitřní `alt` je souběh z DR1: Allocation Policy konflikt neviděla, protože druhé potvrzení ještě nebylo zapsané, a zápis odmítne až PostgreSQL (ADR-01). Volající dostane v obou případech stejnou odpověď `409` se stejným kódem. Třetí větev je souběh dvou operací nad touž rezervací (BR-03): zápis je podmíněný stavem, ze kterého operace vyšla, a když ho mezitím změnila jiná operace, Reservation Management Confirm zopakuje nad aktuálním stavem. E-mail se posílá až po úspěšném `COMMIT`.
 
 ### H2. Zaměřený návrhový třídní diagram
 
@@ -375,13 +375,15 @@ Stejný scénář jako v části A (Confirm na stanici bez schválení), teď v 
 
 | Zpráva z H1 | Vlastník v H2 | Prvek z G2 |
 |---|---|---|
-| 1, 11, 21, 26 HTTP požadavek a odpověď | `reservations_api.confirm_endpoint()` | Reservation API |
-| 2, 5 confirm, kontroly oprávnění, stavu a času, vypršení | `ReservationService.confirm()`, `expire_overdue()` | Reservation Management |
-| 3, 6, 13 get / station / relevant_for / save | rozhraní `ReservationRepository`, implementace `SqlReservationRepository` | Reservation Store |
-| 8, 9, 12 check → deny / allow | `AllocationPolicy.check()` → `AllocationDecision` | Allocation Policy |
-| 22–24 porušení constraintu → `AllocationConflict` | `SqlReservationRepository.translate()` | Reservation Store |
-| 10, 25 chyba s kódem | `ReservationError` (a podtřída `AllocationConflict`) | Reservation Management |
-| 17–19 e-mail a záznam SENT / FAILED | rozhraní `Notifier`, implementace `NotificationIntegration` | Notification Integration |
+| 1, 13, 24, 29 HTTP požadavek a odpověď | `reservations.api.confirm_reservation()` | Reservation API |
+| 2, 7, 23 confirm, kontroly oprávnění, stavu a času | `ReservationService.confirm()`, `_allocate()` | Reservation Management |
+| 33 opakování operace po `StaleState` | dekorátor `@serialized` nad `ReservationService.confirm()` | Reservation Management |
+| 3, 5, 8, 15 expire_pending / user / get / station / relevant_for / save | rozhraní `ReservationRepository`, implementace `SqlReservationRepository` | Reservation Store |
+| 10, 11, 14 check → deny / allow | `AllocationPolicy.check()` → `AllocationDecision` | Allocation Policy |
+| 25–27 porušení constraintu → `AllocationConflict` | `SqlReservationRepository._translate()` | Reservation Store |
+| 30–32 zápis ze zastaralého stavu → `StaleState` | `SqlReservationRepository.save()` | Reservation Store |
+| 12, 28 chyba s kódem | `ReservationError` (a podtřída `AllocationConflict`) | Reservation Management |
+| 20–22 e-mail a záznam SENT / FAILED | rozhraní `Notifier`, implementace `NotificationIntegration` | Notification Integration |
 
 ### I. Cross-view kontrola
 

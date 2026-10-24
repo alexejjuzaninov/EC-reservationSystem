@@ -541,20 +541,21 @@ stateDiagram-v2
 
 ## Kde je specifikace realizovaná v aplikaci
 
-Aplikace je záměrně jednoduchá: jeden modul, data jen v paměti, jeden zámek pro všechny operace. Architekturu řeší až C03.
+Aplikace C02 je záměrně jednoduchá: jeden modul, data jen v paměti, jeden zámek pro všechny operace. Architekturu řeší až C03.
 
 - `reservation.py` je hlavní běžící aplikace. Příkaz `test` spustí 40 příkladů ověření, příkaz `demo` krátkou ukázku.
 - `app/index.html` je webová ukázka pro předvedení. Obsahuje stejná pravidla jako `reservation.py`, přepsaná do JavaScriptu, a spouští stejných 40 příkladů.
+- `src/` je walking skeleton z C03 (FastAPI + PostgreSQL), který tutéž specifikaci realizuje jako produkt. Stejných 40 příkladů se stejnými názvy ověřuje přes HTTP `src/tests/test_verification_examples.py`.
 
-| Operace | `reservation.py` | `app/index.html` | Příklady ověření |
-|---|---|---|---|
-| OP-01 Create Reservation | `ChargingReservationSystem.create()` | `create()` | OP-01 (8) |
-| OP-02 Check Availability | `check_availability()` | `checkAvailability()` | OP-02 (5) |
-| OP-03 Confirm Reservation | `confirm()`, `_check_allocation()` | `confirm()`, `_checkAllocation()` | OP-03 (10) |
-| OP-04 Cancel Reservation | `cancel()` | `cancel()` | OP-04 (6) |
-| OP-05 Approve / Reject | `approve()`, `reject()` | `approve()`, `reject()` | v0.2 (10) |
-| BR-06 vypršení | `_expire_overdue()` | `_expireOverdue()` | v0.2 |
-| REQ-09 notifikace | `_notify()`, `NotificationService` | `_notify()`, `NotificationService` | REQ-09 (1) |
+| Operace | `reservation.py` | `app/index.html` | `src/reservations/` | Příklady ověření |
+|---|---|---|---|---|
+| OP-01 Create Reservation | `ChargingReservationSystem.create()` | `create()` | `ReservationService.create()` | OP-01 (8) |
+| OP-02 Check Availability | `check_availability()` | `checkAvailability()` | `ReservationService.check_availability()` | OP-02 (5) |
+| OP-03 Confirm Reservation | `confirm()`, `_check_allocation()` | `confirm()`, `_checkAllocation()` | `ReservationService.confirm()`, `_allocate()`, `AllocationPolicy.check()`; BR-02 a BR-04 i ve schématu (`store.py`, ADR-01) | OP-03 (10) |
+| OP-04 Cancel Reservation | `cancel()` | `cancel()` | `ReservationService.cancel()` | OP-04 (6) |
+| OP-05 Approve / Reject | `approve()`, `reject()` | `approve()`, `reject()` | `ReservationService.approve()`, `reject()` | v0.2 (10) |
+| BR-06 vypršení | `_expire_overdue()` | `_expireOverdue()` | `SqlReservationRepository.expire_pending()` | v0.2 |
+| REQ-09 notifikace | `_notify()`, `NotificationService` | `_notify()`, `NotificationService` | `ReservationService._notify()`, `NotificationIntegration` | REQ-09 (1) |
 
 Ve webové ukázce:
 

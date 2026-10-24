@@ -13,9 +13,11 @@ participant "Notification\nService" as NS
 
 emp -> API : POST /reservations/{id}/confirm
 API -> RM : confirm(user_id, reservation_id)
-RM -> RS : get(reservation_id), station(station_id)
+RM -> RS : expire_pending(now)
+RS -> DB : UPDATE PENDING_APPROVAL → EXPIRED (BR-06); COMMIT
+RM -> RS : user(user_id), get(reservation_id), station(station_id)
 RS -> DB : SELECT
-RM -> RM : vypršení žádostí (BR-06); oprávnění, stav DRAFT, now < start\n(jinak UNAUTHORIZED / INVALID_STATE / TOO_LATE)
+RM -> RM : oprávnění, stav DRAFT, now < start\n(jinak UNAUTHORIZED / INVALID_STATE / TOO_LATE)
 RM -> RS : relevant_for(X)
 RS -> DB : SELECT CONFIRMED téže stanice nebo téhož uživatele
 RM -> AP : check(X, stanice, CONFIRMED rezervace)
@@ -25,9 +27,10 @@ alt podmínky nesplněny (sekvenční konflikt)
   API --> emp : 409 {code}
 else podmínky splněny
   AP --> RM : allow
-  RM -> RS : save(X, state = CONFIRMED)
-  RS -> DB : UPDATE state = 'CONFIRMED'; COMMIT
+  RM -> RS : save(X, expected = DRAFT)
+  RS -> DB : UPDATE state = 'CONFIRMED'\nWHERE id = X AND state = 'DRAFT'
   alt zápis prošel
+    RS -> DB : COMMIT
     DB --> RS : OK
     RS --> RM : OK
     RM -> NI : send(vlastník, "potvrzeno")
@@ -41,6 +44,11 @@ else podmínky splněny
     RS --> RM : AllocationConflict(OVERLAP / DAILY_LIMIT)
     RM --> API : ReservationError(kód), X zůstává DRAFT
     API --> emp : 409 {code}
+  else stav X mezitím změnila jiná operace (BR-03)
+    DB --> RS : 0 řádků
+    RS -> DB : ROLLBACK
+    RS --> RM : StaleState
+    RM -> RM : @serialized: confirm znovu od kroku 3\n(nejvýše 3×; nové čtení uvidí např. CANCELLED → INVALID_STATE)
   end
 end
 @enduml

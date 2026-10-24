@@ -296,6 +296,8 @@ Kontrola, že testy rozhodnutí DD opravdu hlídají (dočasná kopie `src/`, re
 
 ### Nález po C03: lost update při souběhu operací nad touž rezervací
 
+Oprava: commit `7f9e0ba`, [Pull Request #8](https://github.com/alexejjuzaninov/EC-reservationSystem/pull/8), sloučen merge commitem `279d1e6`.
+
 BR-03 ve specifikaci říká, že operace nad rezervací jsou serializované: „Confirm then Cancel gives CANCELLED; Cancel then Confirm gives INVALID_STATE“. Aplikace C02 to zajišťovala zámkem `threading.Lock`; walking skeleton zámek podle ADR-01 nahradil invarianty v databázi, ty ale hlídají jen vztahy mezi různými rezervacemi (BR-02, BR-04), ne přechody jedné rezervace. `save()` zapisoval nový stav bez podmínky na ten původní.
 
 Pozorováno (dočasný test, dvě operace přečtou stejný stav, než kterákoli zapíše): když Cancel zapsal první a Confirm druhý, oba volající dostali úspěch (`CANCELLED` i `CONFIRMED`), odešly oba e-maily a v databázi zůstalo CONFIRMED, i když uživatel dostal potvrzení o zrušení. Stejně Approve a Reject téže žádosti uspěly oba. Při první analýze jsme za doklad nejdřív považovali i opačné pořadí (Confirm zapsal první, Cancel druhý); ten výsledek ale odpovídá dovolenému pořadí Confirm → Cancel, proto testy pořadí zápisu určují explicitně.
@@ -324,4 +326,4 @@ Oprava: `save(r, expected)` zapíše jen tehdy, když je v databázi pořád sta
 - při velmi silném souběhu by tři pokusy po deadlocku nemusely stačit a volající by dostal chybu databáze (při testech nepozorováno); stejně tak tři opakování operace při `StaleState` skončí `INVALID_STATE`;
 - webová ukázka `app/index.html` je kopie pravidel C02 (driver D5).
 
-**Commit/tag:** první verze DD `0686cde` (tag `c05-detailed-design`); aktualizace po C03 je součástí stavu označeného tagem `c03-architecture`.
+**Commit/tag:** první verze DD `0686cde` (tag `c05-detailed-design`); aktualizace po C03 je součástí stavu označeného tagem `c03-architecture`; serializace BR-03 (`save(r, expected)`, `@serialized`) commit `7f9e0ba`. Celý aktuální stav označuje tag `c06-baseline`.

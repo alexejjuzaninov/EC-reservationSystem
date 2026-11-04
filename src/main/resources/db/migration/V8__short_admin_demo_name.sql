@@ -1,0 +1,3 @@
+UPDATE identity.users
+SET name = 'Elena'
+WHERE id = '10000000-0000-0000-0000-000000000006';

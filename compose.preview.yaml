@@ -1,0 +1,161 @@
+name: ec_preview
+
+services:
+  db-primary:
+    image: postgis/postgis:16-3.6
+    environment:
+      POSTGRES_DB: ec_reservation
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:?Set REPLICATION_PASSWORD}
+    command: ["postgres", "-c", "wal_level=replica", "-c", "max_wal_senders=3", "-c", "wal_keep_size=256MB", "-c", "shared_buffers=128MB", "-c", "max_connections=50"]
+    volumes:
+      - primary_data:/var/lib/postgresql/data
+      - ./db/primary-init:/docker-entrypoint-initdb.d:ro
+    networks: [data]
+    mem_limit: 1g
+    cpus: 1.25
+    pids_limit: 150
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ec_reservation"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  db-replica:
+    image: postgis/postgis:16-3.6
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:?Set REPLICATION_PASSWORD}
+    entrypoint: ["bash", "/replica/entrypoint.sh"]
+    volumes:
+      - replica_data:/var/lib/postgresql/data
+      - ./db/replica:/replica:ro
+    networks: [data]
+    mem_limit: 768m
+    cpus: 0.75
+    pids_limit: 120
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    depends_on:
+      db-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ec_reservation"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    user: "999:1000"
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "96mb", "--maxmemory-policy", "allkeys-lru"]
+    networks: [data]
+    mem_limit: 160m
+    cpus: 0.25
+    pids_limit: 60
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    profiles: [setup]
+    image: ec-preview-app:local
+    build:
+      context: .
+      dockerfile: Dockerfile.preview
+    environment:
+      DB_PRIMARY_HOST: db-primary
+      DB_REPLICA_HOST: db-replica
+      DB_PRIMARY_PORT: 5432
+      DB_REPLICA_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DB_MIGRATION_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      APP_MIGRATION_ONLY: "true"
+      APP_SCHEDULING_ENABLED: "false"
+      SPRING_MAIN_WEB_APPLICATION_TYPE: none
+      JAVA_TOOL_OPTIONS: -Xmx512m
+    networks: [data]
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 100
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      db-primary:
+        condition: service_healthy
+      db-replica:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  app:
+    image: ec-preview-app:local
+    build:
+      context: .
+      dockerfile: Dockerfile.preview
+    environment:
+      SPRING_PROFILES_ACTIVE: preview
+      DB_PRIMARY_HOST: db-primary
+      DB_REPLICA_HOST: db-replica
+      DB_PRIMARY_PORT: 5432
+      DB_REPLICA_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      PREVIEW_DB_PASSWORD: ${PREVIEW_DB_PASSWORD:?Set PREVIEW_DB_PASSWORD}
+      JAVA_TOOL_OPTIONS: -Xms128m -Xmx512m -XX:ActiveProcessorCount=2
+    networks: [front, data]
+    mem_limit: 768m
+    cpus: 1.25
+    pids_limit: 120
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    depends_on:
+      db-primary:
+        condition: service_healthy
+      db-replica:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  edge:
+    image: nginxinc/nginx-unprivileged:stable-alpine
+    volumes:
+      - ./preview/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./preview/nginx-main.conf:/etc/nginx/nginx.conf:ro
+    networks: [edge, front]
+    mem_limit: 96m
+    cpus: 0.25
+    pids_limit: 60
+    read_only: true
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    depends_on: [app]
+
+networks:
+  edge:
+    internal: true
+  front:
+    internal: true
+  data:
+    internal: true
+
+volumes:
+  primary_data: {}
+  replica_data: {}

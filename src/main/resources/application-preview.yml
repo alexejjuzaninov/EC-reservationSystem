@@ -1,0 +1,9 @@
+spring:
+  flyway:
+    enabled: false
+app:
+  scheduling:
+    enabled: false
+  preview:
+    read-only: true
+    db-password: ${PREVIEW_DB_PASSWORD}

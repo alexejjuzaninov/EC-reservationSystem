@@ -1,4 +1,12 @@
-__pycache__/
+/target/
+/.idea/
+/.vscode/
+*.iml
+.env
+/preview/artifacts/
+/preview/secrets/*
+!/preview/secrets/.gitignore
+**/__pycache__/
 *.pyc
-.venv/
-.pytest_cache/
+**/.pytest_cache/
+*.log

@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f7fa">
+  <meta name="description" content="Find and reserve electric vehicle charging with EC.">
+  <title>EC — charging belongs everywhere</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/vendor/leaflet/leaflet.js" defer></script>
+  <script src="/czech-cities.js" defer></script>
+  <script src="/app.js" defer></script>
+  <script src="/custom-controls.js" defer></script>
+</head>
+<body class="role-driver">
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="/" aria-label="EC home">
+        <span class="brand-symbol"><span class="brand-bolt">ϟ</span></span>
+        <span class="brand-type">ec<span class="brand-period">.</span><small>electric commons</small></span>
+      </a>
+      <div class="sidebar-context" id="sidebar-context"></div>
+      <nav class="side-nav" id="side-nav" aria-label="Workspace navigation"></nav>
+      <div class="sidebar-footer">
+        <div class="connection-card"><span class="connection-dot" id="connection-dot"></span><div><strong id="connection-title">Connecting services</strong><small id="connection-subtitle">Checking local preview</small></div></div>
+        <p>EC preview <span>·</span> payments and telemetry are simulated</p>
+      </div>
+    </aside>
+    <div class="app-frame">
+      <header class="topbar">
+        <button type="button" class="menu-button" id="menu-button" aria-label="Open navigation" aria-expanded="false">☰</button>
+        <div class="breadcrumb"><span id="breadcrumb-space">Driver space</span><span class="breadcrumb-separator">/</span><strong id="breadcrumb-view">Discover</strong></div>
+        <div class="header-actions">
+          <span id="preview-badge" class="preview-badge" hidden title="All data changes are disabled">View-only demo</span>
+          <button type="button" id="notification-button" class="header-icon-button" aria-label="Notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></svg><span id="notification-count"></span></button>
+          <label class="account-picker"><span class="account-avatar" id="account-avatar">A</span><span class="account-picker-copy"><small>Viewing as</small><select id="actor" aria-label="Choose demo account"></select></span><span class="account-chevron">⌄</span></label>
+        </div>
+      </header>
+      <main id="main-content" tabindex="-1"></main>
+    </div>
+  </div>
+
+  <dialog id="booking-dialog" class="modal booking-modal">
+    <form id="booking-form">
+      <button type="button" class="modal-close" data-close="booking-dialog" aria-label="Close">×</button>
+      <div class="modal-icon">ϟ</div>
+      <p class="modal-kicker">Reserve a charging slot</p>
+      <h2 id="booking-station-name">Station</h2>
+      <p id="booking-station-detail" class="modal-subtitle"></p>
+      <div class="booking-highlights" id="booking-highlights"></div>
+      <div class="form-grid">
+        <label>Starts at<input id="start-at" type="datetime-local" required></label>
+        <label>Ends at<input id="end-at" type="datetime-local" required></label>
+      </div>
+      <div id="availability" class="availability">Choose a time to check availability.</div>
+      <button type="submit" id="book-button" class="button button-primary button-block">Confirm reservation</button>
+      <p class="modal-fineprint" id="booking-fineprint">Payment is simulated. No card or money is involved.</p>
+    </form>
+  </dialog>
+
+  <dialog id="station-dialog" class="modal station-modal">
+    <form id="station-form">
+      <button type="button" class="modal-close" data-close="station-dialog" aria-label="Close">×</button>
+      <div class="station-modal-head"><div><p class="modal-kicker">Your next charging location</p><h2>Add a station</h2><p class="modal-subtitle">Place the pin, describe the charger, and set an hourly rate.</p></div><div class="modal-icon">ϟ</div></div>
+      <div class="station-modal-layout">
+        <div class="station-form-fields">
+          <div class="form-grid"><label>Station name<input name="name" placeholder="Parkside charger" required maxlength="80"></label><label>Country<select id="station-country" name="countryCode"><option value="CZ">Czechia</option><option value="US">United States</option></select></label></div>
+          <div class="form-grid"><label>City<input id="station-city" name="city" list="station-city-options" placeholder="Choose a city" required><datalist id="station-city-options"></datalist></label><label>Street address<input name="address" placeholder="Street and number" required></label></div>
+          <div class="form-grid"><label>Connector<select name="connector"><option value="Type 2">Type 2</option><option value="CCS2">CCS2</option></select></label><label>Power, kW<input name="powerKw" type="number" min="1" max="350" value="11" required></label></div>
+          <div class="form-grid"><label><span>Hourly price · <b id="price-currency">CZK</b></span><input name="price" type="number" min="0" max="10000" value="90" required></label><label>Access instructions<input name="accessNote" placeholder="Shared only after booking"></label></div>
+          <input id="station-latitude" name="latitude" type="hidden" required>
+          <input id="station-longitude" name="longitude" type="hidden" required>
+          <div class="pin-summary"><span class="pin-summary-symbol">ϟ</span><div><strong id="pin-summary-title">Location pin ready</strong><small id="pin-summary-coordinates">Choose a point on the map</small></div></div>
+          <div class="form-note">Partner listings require admin approval. Access instructions stay private until a driver books.</div>
+          <button class="button button-primary button-block" type="submit" id="station-submit">Submit station for review</button>
+        </div>
+        <div class="location-picker"><div id="picker-map" aria-label="Choose station location on the map"></div><div class="picker-hint">Click the map to position your charger</div></div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="account-dialog" class="modal account-modal">
+    <form id="account-form">
+      <button type="button" class="modal-close" data-close="account-dialog" aria-label="Close">×</button>
+      <div class="modal-icon">ϟ</div>
+      <p class="modal-kicker">Create a demo profile</p>
+      <h2>Join the network</h2>
+      <p class="modal-subtitle">Switch between real local workflows without signing up or connecting a payment method.</p>
+      <label>Your name or company name<input name="name" placeholder="Alex or Acme Charging" required maxlength="80"></label>
+      <label>Profile type<select name="kind" id="new-account-kind"><option value="PERSON">Private host</option><option value="COMPANY">Company</option><option value="DRIVER">Driver</option></select></label>
+      <button class="button button-primary button-block" type="submit">Create demo profile</button>
+    </form>
+  </dialog>
+
+  <dialog id="telemetry-dialog" class="modal telemetry-modal">
+    <button type="button" class="modal-close" data-close="telemetry-dialog" aria-label="Close">×</button>
+    <p class="modal-kicker">Simulated station telemetry</p>
+    <h2 id="telemetry-name">Station pulse</h2>
+    <div id="telemetry-content"></div>
+  </dialog>
+  <dialog id="time-search-dialog" class="modal time-search-modal">
+    <button type="button" class="modal-close" data-close="time-search-dialog" aria-label="Close">×</button>
+    <p class="modal-kicker">Search by time</p>
+    <h2>When do you need to charge?</h2>
+    <p class="modal-subtitle">See chargers you can reserve for a specific window.</p>
+    <form id="time-search-form">
+      <div class="form-grid">
+        <label>Arrival<input id="search-start-at" type="datetime-local" required></label>
+        <label>Charging time<select id="search-duration"><option value="30">30 minutes</option><option value="60" selected>1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option><option value="180">3 hours</option><option value="240">4 hours</option></select></label>
+      </div>
+      <button type="submit" class="button button-primary button-block">Show available chargers</button>
+    </form>
+  </dialog>
+  <dialog id="schedule-dialog" class="modal schedule-modal">
+    <button type="button" class="modal-close" data-close="schedule-dialog" aria-label="Close">×</button>
+    <p class="modal-kicker">Station availability</p>
+    <h2 id="schedule-station-name">Manage schedule</h2>
+    <p class="modal-subtitle">Set regular opening hours and close individual dates when needed. Confirmed reservations stay in place.</p>
+    <div class="schedule-tabs" role="tablist" aria-label="Schedule settings">
+      <button type="button" class="active" data-schedule-tab="weekly" role="tab" aria-selected="true">Weekly hours</button>
+      <button type="button" data-schedule-tab="blocks" role="tab" aria-selected="false">Blocked dates</button>
+    </div>
+    <div id="weekly-panel" class="schedule-tab-panel">
+      <form id="weekly-form">
+        <div class="weekly-topline"><strong id="weekly-status">Open around the clock</strong><span>Local station time</span></div>
+        <label class="weekly-zone-label">Time zone<select id="weekly-zone" required></select></label>
+        <div id="weekly-days" class="weekly-days"></div>
+        <div class="weekly-actions"><button type="button" class="subtle-link" data-weekly-preset="everyday">Open every day</button><button type="button" class="subtle-link" data-weekly-preset="weekdays">Weekdays 8–20</button></div>
+        <button type="submit" class="button button-primary button-block">Save weekly hours</button>
+        <button type="button" id="reset-weekly" class="weekly-reset" data-reset-weekly hidden>Reset to 24/7</button>
+      </form>
+    </div>
+    <div id="blocks-panel" class="schedule-tab-panel" hidden>
+      <div class="schedule-section-title"><strong>Upcoming blocked time</strong><span id="schedule-count"></span></div>
+      <div id="schedule-blocks" class="schedule-blocks"></div>
+      <form id="block-form" class="block-form">
+        <h3>Block a date</h3>
+        <div class="form-grid">
+          <label>Starts at<input id="block-start-at" type="datetime-local" required></label>
+          <label>Ends at<input id="block-end-at" type="datetime-local" required></label>
+        </div>
+        <label><span>Reason <em class="optional-label">optional</em></span><input id="block-reason" maxlength="100" placeholder="Maintenance or private use"></label>
+        <button type="submit" class="button button-primary button-block">Save blocked time</button>
+      </form>
+    </div>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

@@ -1,0 +1,10 @@
+target
+tools
+docs
+.git
+*.log
+*.dump
+*.tar
+.env
+secrets
+preview/secrets

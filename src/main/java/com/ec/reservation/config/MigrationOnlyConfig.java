@@ -1,4 +1,4 @@
-package com.ec.reservation;
+package com.ec.reservation.config;
 
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.SpringApplication;

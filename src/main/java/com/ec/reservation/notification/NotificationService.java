@@ -1,4 +1,4 @@
-package com.ec.reservation;
+package com.ec.reservation.notification;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;

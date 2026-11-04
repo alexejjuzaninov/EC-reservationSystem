@@ -4,7 +4,7 @@ The public site is a **view-only demo**. The source project remains fully functi
 
 ## Current deployment
 
-The dedicated Linux project directory is `/home/ivan/ec-preview`. It has its own database volumes, credentials, and Cloudflare Tunnel connector. Git does not track local credentials or connector tokens. One-time archive creation and transfer helpers have been removed from this repository. The running server keeps its own deployed copy.
+The dedicated Linux project directory has its own database volumes, credentials, and Cloudflare Tunnel connector. Git does not track local credentials or connector tokens. One-time archive creation and transfer helpers have been removed from this repository. The running server keeps its own deployed copy.
 
 The app uses `preview_reader`, which has `SELECT` only. The servlet filter and Nginx both reject API methods that change data. The sole POST exception is `/api/stations/availability-batch`, which only checks open slots. Background event dispatch and Flyway are disabled in the running preview app. Redis only caches derived map clusters and is nonpersistent. All demo roles and existing records remain present; the public copy marks most old seeded notifications as read to give the sample inboxes plausible counts. Role selection does not authenticate a real user.
 
@@ -24,4 +24,4 @@ Use `docker compose --env-file preview/.env -f compose.preview.yaml ps` and `cur
 
 ## Remove
 
-The local, Git-ignored `preview/remove-server.sh` is a narrowly scoped teardown helper. Copy it to the server and run it with `sh`; it stops the dedicated `ec_preview` Compose stack, removes its database volumes and custom app image, and deletes `/home/ivan/ec-preview`. It checks the exact target path and project name before deleting anything. Delete the dedicated tunnel and DNS route separately in Cloudflare. The helper does not touch other Compose projects. Docker isolation reduces exposure, but sharing a kernel with other services is not an absolute security boundary; a separate VPS gives stronger separation.
+The local, Git-ignored `preview/remove-server.sh` is a narrowly scoped teardown helper. Copy it to the server and run it with `sh`; it stops the dedicated `ec_preview` Compose stack, removes its database volumes and custom app image, and deletes its project directory. It checks the exact target path and project name before deleting anything. Delete the dedicated tunnel and DNS route separately in Cloudflare. The helper does not touch other Compose projects. Docker isolation reduces exposure, but sharing a kernel with other services is not an absolute security boundary; a separate VPS gives stronger separation.

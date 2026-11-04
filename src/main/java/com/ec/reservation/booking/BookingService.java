@@ -1,5 +1,7 @@
-package com.ec.reservation;
+package com.ec.reservation.booking;
 
+import com.ec.reservation.catalog.StationService;
+import com.ec.reservation.identity.IdentityService;
 import jakarta.validation.constraints.NotNull;
 import java.sql.ResultSet;
 import java.sql.SQLException;

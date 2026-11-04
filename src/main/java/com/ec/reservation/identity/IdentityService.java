@@ -1,4 +1,4 @@
-package com.ec.reservation;
+package com.ec.reservation.identity;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;

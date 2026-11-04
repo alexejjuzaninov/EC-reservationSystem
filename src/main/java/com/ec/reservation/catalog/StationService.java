@@ -1,5 +1,6 @@
-package com.ec.reservation;
+package com.ec.reservation.catalog;
 
+import com.ec.reservation.identity.IdentityService;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;

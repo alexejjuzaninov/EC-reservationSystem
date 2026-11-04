@@ -1,4 +1,4 @@
-package com.ec.reservation;
+package com.ec.reservation.config;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;

@@ -1,6 +1,6 @@
 # EC Reservation System
 
-An English-language EV charging marketplace built with Spring Boot 3.5, Java 21, PostgreSQL 16 with PostGIS, a physical read replica, Redis, Flyway, and a responsive web app. The previous Python prototype and its documentation are preserved in [old/](old/); the Spring Boot project lives at the repository root.
+An English-language EV charging marketplace built with Spring Boot 4.1, Java 21, PostgreSQL 16 with PostGIS, a physical read replica, Redis, Flyway, and a responsive web app. The previous Python prototype and its documentation are preserved in [old/](old/); the Spring Boot project lives at the repository root.
 
 EC operates its own chargers. Private hosts and companies can list theirs for drivers to reserve, with a 12% EC commission on partner bookings. Booking, availability, moderation, notifications, search, and access rules work against local data. Payments, station telemetry, business metrics, and Kafka delivery are clearly marked simulations.
 
@@ -52,6 +52,12 @@ The volume reset removes this Compose project's local data.
 The UI uses the local REST API. GET /api/users lists demo accounts. The X-Demo-User header selects an account for manual testing; omitted headers use Anna. Main endpoints cover /api/map/explore, /api/stations, /api/stations/{id}/availability, /api/stations/availability-batch, /api/stations/{id}/weekly-hours, /api/stations/{id}/blocks, /api/saved-stations, /api/bookings, /api/bookings/page, /api/admin/stations, /api/notifications, /api/dashboard, and /api/system. Admin review and owner controls have dedicated endpoints.
 
 See [architecture](docs/architecture.md) for storage boundaries and data flow.
+
+## Source layout
+
+The backend starts at `src/main/java/com/ec/reservation/ReservationApplication.java`. Its packages separate the HTTP API, configuration, identity, catalog and map, booking, billing, notifications, dashboards, and public-preview protection. Flyway migrations are in `src/main/resources/db/migration/`.
+
+The frontend is in `src/main/resources/static/`: `index.html`, `app.js`, `custom-controls.js`, `styles.css`, fonts, and Leaflet assets. Spring Boot serves it directly; there is no separate frontend build or repository.
 
 The public read-only deployment uses a separate Compose stack, database snapshot, and Cloudflare Tunnel. Its operational notes are in [preview/README.md](preview/README.md). Local preview secrets and snapshot artifacts are excluded from Git.
 

@@ -1,5 +1,14 @@
-package com.ec.reservation;
+package com.ec.reservation.api;
 
+import com.ec.reservation.billing.BillingPreview;
+import com.ec.reservation.booking.BookingService;
+import com.ec.reservation.catalog.ClusterCache;
+import com.ec.reservation.catalog.MapService;
+import com.ec.reservation.catalog.StationService;
+import com.ec.reservation.dashboard.DashboardService;
+import com.ec.reservation.identity.IdentityService;
+import com.ec.reservation.identity.SavedStationService;
+import com.ec.reservation.notification.NotificationService;
 import jakarta.validation.Valid;
 import java.time.Instant;
 import java.util.List;

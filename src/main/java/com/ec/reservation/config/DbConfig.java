@@ -1,4 +1,4 @@
-package com.ec.reservation;
+package com.ec.reservation.config;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;

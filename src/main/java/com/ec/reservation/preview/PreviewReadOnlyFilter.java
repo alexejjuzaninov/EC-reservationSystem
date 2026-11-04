@@ -1,4 +1,4 @@
-package com.ec.reservation;
+package com.ec.reservation.preview;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;

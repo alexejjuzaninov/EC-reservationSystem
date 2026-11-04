@@ -1,5 +1,9 @@
-package com.ec.reservation;
+package com.ec.reservation.dashboard;
 
+import com.ec.reservation.booking.BookingService;
+import com.ec.reservation.catalog.StationService;
+import com.ec.reservation.identity.IdentityService;
+import com.ec.reservation.notification.NotificationService;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;

@@ -1,5 +1,6 @@
-package com.ec.reservation;
+package com.ec.reservation.identity;
 
+import com.ec.reservation.catalog.StationService;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Qualifier;

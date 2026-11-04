@@ -1,4 +1,4 @@
-package com.ec.reservation;
+package com.ec.reservation.api;
 
 import java.util.Map;
 import org.springframework.http.HttpStatus;

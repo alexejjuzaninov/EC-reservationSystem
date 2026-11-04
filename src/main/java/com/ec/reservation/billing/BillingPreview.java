@@ -1,4 +1,4 @@
-package com.ec.reservation;
+package com.ec.reservation.billing;
 
 import java.util.List;
 import java.util.UUID;

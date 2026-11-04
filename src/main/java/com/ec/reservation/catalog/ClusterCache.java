@@ -1,4 +1,4 @@
-package com.ec.reservation;
+package com.ec.reservation.catalog;
 
 import java.time.Duration;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -31,7 +31,7 @@ public class ClusterCache {
         catch (RuntimeException ignored) { }
     }
 
-    boolean online() {
+    public boolean online() {
         try (var connection = redis.getConnectionFactory().getConnection()) {
             return "PONG".equalsIgnoreCase(connection.ping());
         } catch (RuntimeException error) { return false; }

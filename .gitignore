@@ -4,8 +4,8 @@
 *.iml
 .env
 /preview/artifacts/
-/preview/secrets/*
-!/preview/secrets/.gitignore
+/preview/secrets/
+/preview/remove-server.sh
 **/__pycache__/
 *.pyc
 **/.pytest_cache/

@@ -36,31 +36,9 @@ Drivers can save a charger from the map and return to it from Saved chargers. Th
 
 Map counts are grouped in projected screen-sized cells with PostGIS and cached in Redis. At closer zoom, individual price markers and station cards appear. The city picker covers 50 Czech locations; typing a listed place recenters the map. The map remains searchable if Redis is unavailable. Map outlines are served locally; OpenStreetMap background tiles need internet access. Czech city centers are derived from [GeoNames](https://www.geonames.org/export/) under CC BY 4.0; all chargers and street addresses are fictional.
 
-## Verify the workflows
+## Check the local stack
 
-With the stack running:
-
-    powershell -ExecutionPolicy Bypass -File tools\smoke.ps1
-
-The script checks the seeded locations, PostGIS search in both countries, Redis cluster cache, streaming replica, new account and station registration, admin moderation, a two-driver booking conflict, notifications, simulated payout, cancellation, and permissions. It leaves its test records in the local database.
-
-    node tools/schedule-smoke.cjs
-
-This check verifies schedule ownership, admin visibility, overlap and booking conflicts. It removes its temporary blocked interval in a `finally` step.
-
-An optional Playwright browser check exercises the desktop and mobile role layouts and the full listing and booking flow. With Node.js 20+, install Playwright locally, install its Chromium browser if needed, and run:
-
-    npm install --no-save playwright
-    npx playwright install chromium
-    node tools/browser-smoke.cjs
-
-On Windows the script uses the installed Chrome by default. Set CHROME_PATH if Chrome is installed elsewhere.
-For a read-only visual review, run `node tools/map-review.cjs`, `node tools/role-review.cjs`, and `node tools/full-review.cjs`.
-They save screenshots in the system temporary folder, or in `SCREENSHOT_DIR` when set.
-Run `node tools/schedule-ui-smoke.cjs` to create and remove a host schedule block through the browser. It cleans up its test block even if the browser check fails. Run `node tools/weekly-smoke.cjs` to verify weekly hours, batch availability, ownership, and restoration.
-
-Run `node tools/time-weekly-ui-review.cjs` with Playwright available to check the time-first search, booking handoff, weekly schedule dialog, and mobile view. `node tools/weekly-ui-smoke.cjs` saves a preset through the browser and restores the previous schedule afterward.
-Run `node tools/saved-ui-smoke.cjs` to verify saving, reopening, and removing a charger through the browser. It also cleans up its temporary saved entry.
+Run `docker compose ps` and open `http://localhost:18080/api/system`. The response reports the primary, replica, Redis, and which capabilities are simulated.
 
 To intentionally erase all local demo changes, including accounts and bookings:
 
@@ -71,11 +49,11 @@ The volume reset removes this Compose project's local data.
 
 ## API and architecture
 
-The UI uses the same local REST API as the smoke script. GET /api/users lists demo accounts. The X-Demo-User header selects an account for manual testing; omitted headers use Anna. Main endpoints cover /api/map/explore, /api/stations, /api/stations/{id}/availability, /api/stations/availability-batch, /api/stations/{id}/weekly-hours, /api/stations/{id}/blocks, /api/saved-stations, /api/bookings, /api/bookings/page, /api/admin/stations, /api/notifications, /api/dashboard, and /api/system. Admin review and owner controls have dedicated endpoints.
+The UI uses the local REST API. GET /api/users lists demo accounts. The X-Demo-User header selects an account for manual testing; omitted headers use Anna. Main endpoints cover /api/map/explore, /api/stations, /api/stations/{id}/availability, /api/stations/availability-batch, /api/stations/{id}/weekly-hours, /api/stations/{id}/blocks, /api/saved-stations, /api/bookings, /api/bookings/page, /api/admin/stations, /api/notifications, /api/dashboard, and /api/system. Admin review and owner controls have dedicated endpoints.
 
 See [architecture](docs/architecture.md) for storage boundaries and data flow.
 
-The public read-only deployment uses a separate Compose stack, database snapshot, and Cloudflare Tunnel. Its packaging, deployment, and removal instructions are in [preview/README.md](preview/README.md). Local preview secrets and snapshot artifacts are excluded from Git.
+The public read-only deployment uses a separate Compose stack, database snapshot, and Cloudflare Tunnel. Its operational notes are in [preview/README.md](preview/README.md). Local preview secrets and snapshot artifacts are excluded from Git.
 
 ## Preview limits
 

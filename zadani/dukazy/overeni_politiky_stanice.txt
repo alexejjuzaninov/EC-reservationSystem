@@ -1,0 +1,7 @@
+OK  vlastník vypne schvalování: 200
+OK  odpověď obsahuje nové pravidlo: False
+OK  cizí řidič nesmí měnit pravidlo: 403
+OK  vlastník vrátí schvalování: 200
+OK  pravidlo je opět aktivní: True
+OK  pravidlo je uložené: True
+TEST OK

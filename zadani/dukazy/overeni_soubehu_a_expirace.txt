@@ -1,0 +1,22 @@
+OK  vytvoření návrhu: 201
+OK  podání žádosti: 200
+OK  žádost čeká: PENDING_APPROVAL
+OK  vytvoření návrhu: 201
+OK  podání žádosti: 200
+OK  žádost čeká: PENDING_APPROVAL
+OK  dvě čekající žádosti mohou sdílet slot: PENDING_APPROVAL
+OK  schválení první žádosti: 200
+OK  schválení druhé žádosti je konflikt: 409
+OK  druhá zůstává čekající: PENDING_APPROVAL
+OK  první rezervace se uvolní: 200
+OK  druhá žádost jde po uvolnění schválit: 200
+OK  druhá je potvrzena: CONFIRMED
+OK  úklid druhé rezervace: 200
+OK  vytvoření návrhu: 201
+OK  podání žádosti: 200
+OK  žádost čeká: PENDING_APPROVAL
+OK  přesun testovací žádosti do minulosti: UPDATE 1
+OK  plánovač ukončil nevyřízenou žádost: EXPIRED
+OK  expirace má událost: REQUESTED,EXPIRED
+OK  expirace nemá platbu: 
+TEST OK; záznamy: 555b3e4f-d2fe-458b-9d60-282ad6669f76 3642eaee-e6f6-4f00-b705-f0268bceed7d be6d31cb-c8c0-4514-b7e7-e641999e65f6

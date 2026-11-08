@@ -1,0 +1,21 @@
+server:
+  port: ${APP_PORT:18080}
+spring:
+  application:
+    name: ec-reservation-preview
+  flyway:
+    url: jdbc:postgresql://${DB_PRIMARY_HOST:localhost}:${DB_PRIMARY_PORT:56432}/ec_reservation
+    user: postgres
+    password: ${DB_MIGRATION_PASSWORD:local_postgres}
+  jackson:
+    time-zone: UTC
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:57379}
+app:
+  db:
+    primary-host: ${DB_PRIMARY_HOST:localhost}
+    replica-host: ${DB_REPLICA_HOST:localhost}
+    primary-port: ${DB_PRIMARY_PORT:56432}
+    replica-port: ${DB_REPLICA_PORT:56433}

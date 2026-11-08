@@ -1,0 +1,10 @@
+OK  návrh vytvořen: 201
+OK  žádost podána: 200
+OK  návrh vytvořen: 201
+OK  žádost podána: 200
+OK  paralelní HTTP výsledky: [200, 409]
+OK  jeden potvrzený a jeden čekající stav: ['CONFIRMED', 'PENDING_APPROVAL']
+OK  DB oracle: právě jeden obsazený slot: 1
+OK  úklid žádosti: 200
+OK  úklid žádosti: 200
+TEST OK; záznamy: 0725b13d-d559-4c37-986c-7e0b88296a79 bd57c889-03c7-4246-a5a8-a25429a2d5ab

@@ -1,0 +1,69 @@
+# Preserve the existing Compose volume names after moving the source directory.
+name: ec-reservation-system-v2
+
+services:
+  db-primary:
+    image: postgis/postgis:16-3.6
+    environment:
+      POSTGRES_DB: ec_reservation
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: local_postgres
+    command: ["postgres", "-c", "wal_level=replica", "-c", "max_wal_senders=10", "-c", "max_replication_slots=10"]
+    ports: ["127.0.0.1:56432:5432"]
+    volumes:
+      - primary_data:/var/lib/postgresql/data
+      - ./db/primary-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ec_reservation"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  db-replica:
+    image: postgis/postgis:16-3.6
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+    entrypoint: ["bash", "/replica/entrypoint.sh"]
+    ports: ["127.0.0.1:56433:5432"]
+    volumes:
+      - replica_data:/var/lib/postgresql/data
+      - ./db/replica:/replica:ro
+    depends_on:
+      db-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ec_reservation"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["127.0.0.1:57379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    environment:
+      DB_PRIMARY_HOST: db-primary
+      DB_REPLICA_HOST: db-replica
+      DB_PRIMARY_PORT: 5432
+      DB_REPLICA_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports: ["127.0.0.1:18080:18080"]
+    depends_on:
+      db-primary:
+        condition: service_healthy
+      db-replica:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  primary_data:
+  replica_data:

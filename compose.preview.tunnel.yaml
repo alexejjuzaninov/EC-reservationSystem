@@ -1,0 +1,25 @@
+services:
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    user: "1000:1000"
+    command: ["tunnel", "--no-autoupdate", "run", "--token-file", "/run/secrets/tunnel_token"]
+    secrets: [tunnel_token]
+    networks:
+      edge: {}
+      tunnel_egress:
+        gw_priority: 1
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 60
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    depends_on: [edge]
+
+secrets:
+  tunnel_token:
+    file: ./preview/secrets/tunnel-token
+
+networks:
+  tunnel_egress: {}

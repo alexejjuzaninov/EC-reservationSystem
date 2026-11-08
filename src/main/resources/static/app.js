@@ -7,6 +7,9 @@ const state = {
   clusters: [], cachedTiles: 0, sidebarOpen: false, availabilityRequest: 0,
   adminCatalog: {country:'', status:'', ownerKind:'', query:'', page:0, size:20, result:null}, catalogRequest:0,
   bookingPager: {status:'', country:'', page:0, size:8, result:null}, bookingRequest:0,
+  demoBookingDecisions: new Map(),
+  demoStationPolicies: new Map(),
+  demoNotifications: new Map(),
   scheduleStation: null, timeFilter: null, availableCount: 0, checkedCount: 0
 };
 const places = {
@@ -59,7 +62,7 @@ let toastTimer, mapTimer, filterTimer, pickerTimer, catalogTimer;
 async function api(path, options = {}) {
   if (state.previewReadOnly && options.method && !['GET','HEAD'].includes(options.method.toUpperCase())
       && !(options.method.toUpperCase() === 'POST' && path === '/stations/availability-batch')) {
-    throw new Error('This public preview is view-only. Changes are disabled.');
+    throw new Error('This public preview does not save changes to the server.');
   }
   const response = await fetch('/api' + path, {
     ...options,
@@ -95,15 +98,18 @@ function renderChrome() {
   document.body.className = 'role-' + kind.toLowerCase() + (state.sidebarOpen ? ' sidebar-open' : '')
     + (state.previewReadOnly ? ' public-preview' : '');
   $('#preview-badge').hidden = !state.previewReadOnly;
-  $('#actor').innerHTML = state.users.map(user => `<option value="${user.id}">${esc(user.name)} · ${roleName[user.kind]}</option>`).join('');
+  const actorOptions = state.users.map(user => `<option value="${user.id}">${esc(user.name)} · ${roleName[user.kind]}</option>`).join('');
+  if (state.chromeActorOptions !== actorOptions) { $('#actor').innerHTML = actorOptions; state.chromeActorOptions = actorOptions; }
   $('#actor').value = state.actor.id;
   $('#account-avatar').textContent = firstName(state.actor.name).charAt(0).toUpperCase();
   $('#breadcrumb-space').textContent = kind === 'DRIVER' ? 'Driver space' : kind === 'ADMIN' ? 'Administration' : kind === 'PERSON' ? 'Host space' : kind === 'COMPANY' ? 'Company space' : 'EC operations';
   $('#breadcrumb-view').textContent = navLabel();
-  $('#sidebar-context').innerHTML = `<div class="context-avatar">${firstName(state.actor.name).charAt(0).toUpperCase()}</div><div><small>${roleName[kind]}</small><strong>${esc(state.actor.name)}</strong></div>`;
-  $('#side-nav').innerHTML = navConfig[kind].filter(([key]) => !state.previewReadOnly || key !== 'host').map(([key, label, iconName]) =>
+  const contextHtml = `<div class="context-avatar">${firstName(state.actor.name).charAt(0).toUpperCase()}</div><div><small>${roleName[kind]}</small><strong>${esc(state.actor.name)}</strong></div>`;
+  if (state.chromeContextHtml !== contextHtml) { $('#sidebar-context').innerHTML = contextHtml; state.chromeContextHtml = contextHtml; }
+  const navHtml = navConfig[kind].filter(([key]) => !state.previewReadOnly || key !== 'host').map(([key, label, iconName]) =>
     `<button type="button" class="nav-item ${state.view === key ? 'active' : ''}" data-view="${key}">${svg(iconName, 19)}<span>${label}</span>${key === 'inbox' && state.notices.filter(n => !n.read).length ? `<i>${state.notices.filter(n => !n.read).length}</i>` : key === 'saved' && state.saved.length ? `<i>${state.saved.length}</i>` : ''}</button>`
   ).join('');
+  if (state.chromeNavHtml !== navHtml) { $('#side-nav').innerHTML = navHtml; state.chromeNavHtml = navHtml; }
   $('#notification-count').textContent = state.notices.filter(n => !n.read).length || '';
   const healthy = state.system?.primary === 'online' && state.system?.replica === 'streaming' && state.system?.redis === 'online';
   $('#connection-title').textContent = healthy ? 'All systems online' : 'Services connecting';
@@ -113,15 +119,37 @@ function renderChrome() {
 async function loadActorData() {
   const current = state.actor;
   const [dashboard, bookings, notices, owned, pending, events, saved] = await Promise.all([
-    api('/dashboard'), current.kind === 'ADMIN' ? Promise.resolve([]) : api('/bookings'), api('/notifications'),
+    api('/dashboard'), current.kind === 'ADMIN'
+      ? (state.previewReadOnly ? loadAllPreviewBookings(current.id) : Promise.resolve([])) : api('/bookings'), api('/notifications'),
     ['DRIVER','ADMIN'].includes(current.kind) ? Promise.resolve([]) : api('/my-stations'),
     current.kind === 'ADMIN' ? api('/admin/stations/pending') : Promise.resolve([]),
     current.kind === 'ADMIN' ? api('/events/preview') : Promise.resolve(null),
     current.kind === 'DRIVER' ? api('/saved-stations') : Promise.resolve([])
   ]);
   if (state.actor.id !== current.id) return false;
-  Object.assign(state, {dashboard, bookings, notices, owned, pending, events, saved});
+  Object.assign(state, {dashboard, bookings:applyDemoBookingDecisions(bookings),
+    notices:withDemoNotifications(notices, current.id),
+    owned:applyDemoStationPolicies(owned), pending, events, saved:applyDemoStationPolicies(saved)});
   return true;
+}
+async function loadAllPreviewBookings(actorId) {
+  const options = {headers:{'X-Demo-User':actorId}};
+  const first = await api('/bookings/page?size=50&page=0', options);
+  if (first.pages <= 1) return first.items;
+  const rest = await Promise.all(Array.from({length:first.pages - 1}, (_,index) =>
+    api('/bookings/page?size=50&page=' + (index + 1), options)));
+  return first.items.concat(...rest.map(page => page.items));
+}
+function applyDemoBookingDecisions(bookings) {
+  return bookings.map(booking => ({...booking, ...(state.demoBookingDecisions.get(booking.id) || {})}));
+}
+function applyDemoStationPolicies(stations) {
+  return stations.map(station => state.demoStationPolicies.has(station.id)
+    ? {...station, requiresBookingApproval:state.demoStationPolicies.get(station.id)} : station);
+}
+function withDemoNotifications(notices, actorId) {
+  const demo = [...state.demoNotifications.values()].filter(message => message.recipientId === actorId);
+  return [...demo, ...notices];
 }
 async function setActor(id) {
   const user = state.users.find(item => item.id === id);
@@ -159,6 +187,8 @@ function moveMapTo(place) {
 function render() {
   destroyMap();
   renderChrome();
+  if (state.previewReadOnly && ['trips','bookings'].includes(state.view))
+    state.bookingPager.result = previewBookingPage();
   const kind = state.actor.kind;
   const content = kind === 'DRIVER' ? (state.view === 'discover' ? renderExplore() : state.view === 'saved' ? renderSaved() : state.view === 'trips' ? renderReservations(true) : renderInbox())
     : kind === 'PERSON' ? (state.view === 'overview' ? renderHostOverview() : state.view === 'stations' ? renderStationsPage('host') : state.view === 'bookings' ? renderReservations(false) : renderInbox())
@@ -168,7 +198,7 @@ function render() {
   $('#main-content').innerHTML = content;
   if (kind === 'DRIVER' && state.view === 'discover') mountMap();
   if (kind === 'ADMIN' && state.view === 'catalog') loadAdminCatalog();
-  if (state.view === 'trips' || state.view === 'bookings') loadBookingPage();
+  if (!state.previewReadOnly && (state.view === 'trips' || state.view === 'bookings')) loadBookingPage();
 }
 
 function renderExplore() {
@@ -193,19 +223,20 @@ function renderExplore() {
         <div class="result-heading"><div><span class="result-overline">${state.timeFilter ? 'Available for your time' : 'Stations in view'}</span><h2 id="result-count">Loading locations...</h2></div><button type="button" class="time-filter-button ${state.timeFilter ? 'active' : ''}" data-time-search title="Search by arrival time">${svg('clock', 16)}<span>${state.timeFilter ? 'Change time' : 'Choose time'}</span></button></div>
         <div id="time-filter-summary" class="time-filter-summary" ${state.timeFilter ? '' : 'hidden'}>${state.timeFilter ? `${svg('calendar',15)}<span>${esc(searchTimeLabel())}</span><button type="button" data-clear-time aria-label="Clear time search">×</button>` : ''}</div>
         <div id="station-results" class="result-list"><div class="loading-list"><span></span><span></span><span></span></div></div>
-        <div class="result-footer" id="result-footer">${state.timeFilter ? 'List checks the nearest 100 chargers. Map markers show all stations.' : state.previewReadOnly ? 'Sample locations · view-only public demo.' : 'Fictional stations · reservations work locally.'}</div>
+        <div class="result-footer" id="result-footer">${state.timeFilter ? 'List checks the nearest 100 chargers. Map markers show all stations.' : state.previewReadOnly ? 'Sample locations · no server changes.' : 'Fictional stations · reservations work locally.'}</div>
       </div>
     </div>
-    <div class="explore-bottom"><span>${svg('check', 18)} ${state.previewReadOnly ? 'Check a time without changing the schedule.' : 'A slot is held as soon as you confirm it.'}</span><button type="button" class="subtle-link" data-view="trips">View my trips ${svg('arrow', 16)}</button></div>
+    <div class="explore-bottom"><span>${svg('check', 18)} ${state.previewReadOnly ? 'Check a time without changing the schedule.' : 'Instant reservations and host-approved requests are both available.'}</span><button type="button" class="subtle-link" data-view="trips">View my trips ${svg('arrow', 16)}</button></div>
   </section>`;
 }
 function stationCard(station) {
+  station = applyDemoStationPolicies([station])[0];
   const ownership = station.ownerKind === 'PERSON' ? 'Private host' : station.ownerKind === 'COMPANY' ? 'Company' : 'EC network';
   return `<article class="result-card" data-focus="${station.id}" tabindex="0">
     <div class="result-symbol ${station.ownerKind.toLowerCase()}">${svg('bolt', 22)}</div>
     <div class="result-main"><div class="result-title-row"><h3>${esc(station.name)}</h3><div class="result-title-tools"><span class="result-power">${station.powerKw} kW</span><button type="button" class="save-button ${savedId(station.id) ? 'is-saved' : ''}" data-save="${station.id}" aria-label="${savedId(station.id) ? 'Remove' : 'Save'} ${esc(station.name)}" title="${savedId(station.id) ? 'Remove from saved chargers' : 'Save charger'}">${svg('heart',16)}</button></div></div>
       <p>${esc(station.city)} · ${esc(station.address)}</p>
-      <div class="result-tags"><span>${esc(station.connector)}</span><span>${ownership}</span>${station.synthetic ? '<span>Sample location</span>' : ''}</div>
+      <div class="result-tags"><span>${esc(station.connector)}</span><span>${ownership}</span>${station.requiresBookingApproval ? '<span>Host approval</span>' : ''}${station.synthetic ? '<span>Sample location</span>' : ''}</div>
     </div>
     <div class="result-action"><strong>${money(station.pricePerHourCents, station.countryCode)}<small> / hour</small></strong>
       <button type="button" data-book="${station.id}" class="reserve-button">${state.previewReadOnly ? 'Check slot' : 'Reserve'} ${svg('arrow', 15)}</button></div>
@@ -252,7 +283,7 @@ function syncTimeFilter() {
   button.querySelector('span').textContent = state.timeFilter ? 'Change time' : 'Choose time';
   summary.hidden = !state.timeFilter;
   summary.innerHTML = state.timeFilter ? `${svg('calendar',15)}<span>${esc(searchTimeLabel())}</span><button type="button" data-clear-time aria-label="Clear time search">×</button>` : '';
-  footer.textContent = state.timeFilter ? 'List checks the nearest 100 chargers. Map markers show all stations.' : state.previewReadOnly ? 'Sample locations · view-only public demo.' : 'Fictional stations · reservations work locally.';
+  footer.textContent = state.timeFilter ? 'List checks the nearest 100 chargers. Map markers show all stations.' : state.previewReadOnly ? 'Sample locations · no server changes.' : 'Fictional stations · reservations work locally.';
 }
 function openTimeSearch() {
   const start = state.timeFilter ? new Date(state.timeFilter.startAt) : new Date(Date.now() + 2 * 3600000);
@@ -437,16 +468,21 @@ function listingBadge(station) {
 function stationActions(station) {
   return `<div class="station-actions"><button type="button" class="text-action" data-telemetry="${station.id}">${svg('chart', 17)} Telemetry</button>
     <button type="button" class="text-action" data-schedule="${station.id}">${svg('calendar', 17)} Schedule</button>
+    <button type="button" class="text-action" data-approval-policy="${station.id}" data-required="${station.requiresBookingApproval}">${svg('check', 17)} ${station.requiresBookingApproval ? 'Approval required' : 'Instant booking'}</button>
     <button type="button" class="text-action" data-toggle="${station.id}" data-active="${station.active}">${svg('power', 17)} ${station.active ? 'Pause' : 'Resume'}</button></div>`;
 }
 function renderHostOverview() {
   const station = state.owned[0];
   const income = state.dashboard.metrics.find(item => item.countryCode === 'CZ')?.value || 0;
+  const recent = state.bookings.filter(booking => ['PENDING_APPROVAL', 'CONFIRMED'].includes(booking.status)
+      && new Date(booking.startAt) > new Date())
+    .sort((a, b) => (a.status === 'PENDING_APPROVAL' ? 0 : 1) - (b.status === 'PENDING_APPROVAL' ? 0 : 1)
+      || new Date(a.startAt) - new Date(b.startAt)).slice(0, 3);
   return `<section class="view host-view">
     <div class="host-hero">
       <div class="host-hero-copy"><span class="hero-chip">${svg('pin', 15)} Private hosting</span>
         <h1>Your charger,<br>on your schedule.</h1>
-        <p>${state.previewReadOnly ? 'Explore opening hours and see the drivers who booked this sample charger.' : 'Set weekly hours, block dates, and keep track of the drivers who booked.'}</p>
+        <p>${state.previewReadOnly ? 'Review sample booking requests and opening hours. Your decisions stay in this browser tab.' : 'Set weekly hours, block dates, and keep track of the drivers who booked.'}</p>
         ${pageButton(station ? 'Set opening hours' : 'Add my first charger', station ? 'calendar' : 'plus', station ? `data-schedule="${station.id}"` : 'data-add-station')}
       </div>
       <div class="charger-illustration" aria-hidden="true"><span class="art-line art-line-one"></span><span class="art-line art-line-two"></span><span class="charger-body"><span class="charger-screen"><b>ϟ</b><i></i><i></i></span><span class="charger-slot"></span></span><span class="charger-cable"></span><span class="art-caption">POWER SHARED / 01</span></div>
@@ -458,14 +494,14 @@ function renderHostOverview() {
       </div>
       <div class="host-earnings"><span class="kicker">At a glance</span><div class="earnings-number">${money(income, 'CZ')}</div><p>Estimated payout from confirmed reservations in Czechia. Payments remain simulated in this preview.</p><div class="earnings-rule"><span>Platform commission</span><strong>12%</strong></div></div>
     </div>
-    <div class="recent-panel"><div class="section-inline-head"><div><span class="kicker">Activity</span><h2>People charging with you</h2></div><button class="subtle-link" data-view="bookings">All reservations ${svg('arrow',16)}</button></div>
-      ${state.bookings.length ? state.bookings.slice(0,3).map(bookingRow).join('') : empty('calendar','No reservations yet','Your bookings will appear here as soon as a driver reserves a slot.')}</div>
+    <div class="recent-panel"><div class="section-inline-head"><div><span class="kicker">Activity</span><h2>Upcoming requests and visits</h2></div><button class="subtle-link" data-view="bookings">All reservations ${svg('arrow',16)}</button></div>
+      ${recent.length ? recent.map(bookingRow).join('') : empty('calendar','No upcoming activity','New requests and confirmed visits will appear here.')}</div>
   </section>`;
 }
 function ownedStationCard(station) {
   return `<article class="owned-card"><div class="owned-card-top"><div class="owned-icon">${svg('bolt',25)}</div>${listingBadge(station)}</div>
     <h3>${esc(station.name)}</h3><p>${esc(station.address)}, ${esc(station.city)}</p>
-    <div class="owned-specs"><span>${station.powerKw} kW</span><span>${esc(station.connector)}</span><span>${money(station.pricePerHourCents, station.countryCode)} / h</span></div>
+    <div class="owned-specs"><span>${station.powerKw} kW</span><span>${esc(station.connector)}</span><span>${money(station.pricePerHourCents, station.countryCode)} / h</span><span>${station.requiresBookingApproval ? 'Host approval' : 'Instant booking'}</span></div>
     ${stationActions(station)}</article>`;
 }
 function renderStationsPage(flavor) {
@@ -597,16 +633,94 @@ async function loadAdminCatalog() {
 function bookingRow(booking) {
   const driver = state.actor.kind === 'DRIVER';
   const owner = booking.ownerId === state.actor.id;
+  const labels = {DRAFT:'Draft',PENDING_APPROVAL:'Awaiting host',CONFIRMED:'Confirmed',REJECTED:'Declined',EXPIRED:'Expired',CANCELLED:'Cancelled'};
+  const live = ['DRAFT','PENDING_APPROVAL','CONFIRMED'].includes(booking.status);
+  const amount = owner && state.actor.kind !== 'PLATFORM' ? booking.totalCents - booking.platformFeeCents : booking.totalCents;
   return `<article class="booking-row"><span class="booking-status-icon ${booking.status.toLowerCase()}">${svg(booking.status === 'CANCELLED' ? 'check' : 'bolt',19)}</span>
     <div class="booking-primary"><strong>${esc(booking.stationName)}</strong><small>${esc(booking.stationAddress)}, ${esc(booking.stationCity)}</small>
+      ${!driver ? `<small>Driver: ${esc(booking.driverName)}</small>` : ''}
       ${driver && booking.accessNote ? `<span class="access-instructions">Access: ${esc(booking.accessNote)}</span>` : ''}</div>
     <div><span class="booking-column-label">Time</span><strong>${fullDate(booking.startAt)}</strong><small>to ${new Intl.DateTimeFormat('en-US',{hour:'numeric',minute:'2-digit'}).format(new Date(booking.endAt))}</small></div>
-    <div><span class="booking-column-label">${driver ? 'Charge estimate' : owner ? (state.actor.kind === 'PLATFORM' ? 'EC revenue' : 'Your share') : 'Total'}</span><strong>${money(owner && state.actor.kind !== 'PLATFORM' ? booking.totalCents - booking.platformFeeCents : booking.totalCents, booking.countryCode)}</strong><small>Payment simulated</small></div>
-    <div class="booking-row-actions"><span class="booking-badge ${booking.status.toLowerCase()}">${booking.status === 'CANCELLED' ? 'Cancelled' : 'Confirmed'}</span>
+    <div><span class="booking-column-label">${driver ? 'Charge estimate' : owner ? (state.actor.kind === 'PLATFORM' ? 'EC revenue' : 'Your share') : 'Total'}</span><strong>${live ? money(amount, booking.countryCode) : '—'}</strong><small>${state.demoBookingDecisions.has(booking.id) ? 'Browser demo · no charge' : booking.status === 'CONFIRMED' ? 'Payment simulated' : live ? 'Not charged yet' : 'No charge'}</small></div>
+    <div class="booking-row-actions"><span class="booking-badge ${booking.status.toLowerCase()}">${labels[booking.status] || esc(booking.status)}</span>
       ${driver && booking.status === 'CONFIRMED' ? `<a class="text-action" href="${esc(directionsUrl(booking.stationAddress,booking.stationCity,booking.countryCode,booking.stationLatitude,booking.stationLongitude))}" target="_blank" rel="noopener" aria-label="Directions to ${esc(booking.stationName)} in Google Maps">${svg('pin',14)} Directions</a>` : ''}
-      <button type="button" class="text-action" data-payment="${booking.id}">Payment detail</button>
-      ${booking.status === 'CONFIRMED' && new Date(booking.startAt) > new Date() ? `<button type="button" class="text-action danger" data-cancel="${booking.id}">Cancel</button>` : ''}</div>
+      <button type="button" class="text-action" data-payment="${booking.id}">Payment preview</button>
+      ${!state.previewReadOnly && driver && booking.status === 'DRAFT' && new Date(booking.startAt) > new Date() ? `<button type="button" class="text-action" data-confirm-booking="${booking.id}">Confirm request</button>` : ''}
+      ${owner && booking.status === 'PENDING_APPROVAL' && new Date(booking.startAt) > new Date() ? `<button type="button" class="text-action" data-booking-decision="${booking.id}" data-approve="true">Approve</button><button type="button" class="text-action danger" data-booking-decision="${booking.id}" data-approve="false">Decline</button>` : ''}
+      ${!state.previewReadOnly && ['DRAFT','PENDING_APPROVAL','CONFIRMED'].includes(booking.status) && new Date(booking.startAt) > new Date() ? `<button type="button" class="text-action danger" data-cancel="${booking.id}">Cancel</button>` : ''}</div>
   </article>`;
+}
+function renderPaymentPreview(booking, charge) {
+  const demoApproved = state.demoBookingDecisions.get(booking.id)?.status === 'CONFIRMED';
+  const recorded = !demoApproved && booking.status === 'CONFIRMED' && charge.status === 'SIMULATED';
+  const total = charge.totalCents > 0 ? charge.totalCents : booking.totalCents;
+  const fee = charge.totalCents > 0 ? charge.platformFeeCents : booking.platformFeeCents;
+  const payout = Math.max(0, total - fee);
+  const status = recorded ? 'Demo charge recorded' : demoApproved ? 'Approval simulated' : booking.status === 'CONFIRMED' ? 'Preparing demo charge'
+    : booking.status === 'PENDING_APPROVAL' ? 'Awaiting host approval' : booking.status === 'DRAFT' ? 'Draft request'
+    : booking.status === 'CANCELLED' ? 'Reservation cancelled' : booking.status === 'REJECTED' ? 'Request declined' : 'Request expired';
+  const explanation = recorded ? 'This simulated entry shows how a confirmed booking is divided.'
+    : demoApproved ? 'The host approved this booking in this browser tab. No payment entry was created.'
+    : booking.status === 'CONFIRMED' ? 'The booking is confirmed. Its demo payment entry has not appeared yet.'
+    : 'The slot has no payment record. These amounts show the original estimate only.';
+  const reference = 'EC-DEMO-' + booking.id.slice(0, 8).toUpperCase();
+  return `<div class="payment-summary">
+      <span class="payment-state ${recorded ? 'recorded' : ''}">${svg(recorded ? 'check' : 'clock', 14)} ${status}</span>
+      <span class="payment-amount-label">${recorded ? 'Simulated total' : 'Estimated total'}</span>
+      <strong class="payment-amount">${money(total, booking.countryCode)}</strong>
+      <p>${esc(explanation)}</p>
+    </div>
+    <div class="payment-context"><strong>${esc(booking.stationName)}</strong><span>${fullDate(booking.startAt)} · ${booking.countryCode === 'US' ? 'United States' : 'Czechia'}</span></div>
+    <div class="payment-ledger" aria-label="Payment breakdown">
+      <div><span>Charging session</span><strong>${money(total, booking.countryCode)}</strong></div>
+      <div><span>${recorded ? 'EC commission' : 'Estimated EC commission'} · 12%</span><strong>${money(fee, booking.countryCode)}</strong></div>
+      <div><span>${recorded ? 'Host share' : 'Estimated host share'}</span><strong>${money(payout, booking.countryCode)}</strong></div>
+    </div>
+    <div class="payment-meta"><div><span>Preview ID</span><strong>${reference}</strong></div><div><span>Method</span><strong>${recorded ? 'Demo card ···· 4242' : 'No card charged'}</strong></div></div>
+    <p class="payment-disclaimer">Demo data only. No real card was charged and no payout was sent.</p>`;
+}
+async function openPaymentPreview(id) {
+  const booking = state.bookingPager.result?.items.find(item => item.id === id)
+    || state.bookings.find(item => item.id === id);
+  if (!booking) { toast('This reservation is no longer in the current list.', 'error'); return; }
+  const actorId = state.actor.id;
+  try {
+    const charge = await api('/bookings/' + id + '/payment-preview');
+    if (state.actor.id !== actorId) return;
+    $('#payment-content').innerHTML = renderPaymentPreview(booking, charge);
+    $('#payment-dialog').showModal();
+  } catch (error) { toast(error.message, 'error'); }
+}
+async function simulateBookingDecision(id, approve) {
+  const booking = state.bookings.find(item => item.id === id);
+  if (!booking || booking.ownerId !== state.actor.id || booking.status !== 'PENDING_APPROVAL') {
+    toast('This request is no longer available for your decision.', 'error'); return;
+  }
+  if (Date.parse(booking.startAt) <= Date.now()) {
+    toast('This request has already started.', 'error'); return;
+  }
+  if (approve) {
+    const overlaps = state.bookings.some(other => other.id !== id && other.stationId === booking.stationId
+      && other.status === 'CONFIRMED' && Date.parse(other.startAt) < Date.parse(booking.endAt)
+      && Date.parse(other.endAt) > Date.parse(booking.startAt));
+    if (overlaps) { toast('This charger is already reserved for that time.', 'error'); return; }
+    try {
+      const availability = await api('/stations/' + booking.stationId + '/availability?startAt='
+        + encodeURIComponent(booking.startAt) + '&endAt=' + encodeURIComponent(booking.endAt));
+      if (!availability.available) { toast(availability.reason || 'This slot is unavailable.', 'error'); return; }
+    } catch (error) { toast(error.message, 'error'); return; }
+  }
+  const note = state.owned.find(station => station.id === booking.stationId)?.accessNote;
+  state.demoBookingDecisions.set(id, {status:approve ? 'CONFIRMED' : 'REJECTED',
+    decidedAt:new Date().toISOString(), decidedBy:state.actor.id, ...(approve && note ? {accessNote:note} : {})});
+  state.demoNotifications.set(id, {id:'demo-' + id, recipientId:booking.driverId, type:'BOOKING',
+    title:approve ? 'Booking approved' : 'Booking declined',
+    body:booking.stationName + ' · ' + fullDate(booking.startAt) + '. This is a browser-only demo decision.',
+    createdAt:new Date().toISOString(), read:false});
+  state.bookings = applyDemoBookingDecisions(state.bookings);
+  if (state.view === 'bookings') { state.bookingPager.result = previewBookingPage(); updateReservationContent(); }
+  else render();
+  toast(approve ? 'Approved in this browser tab. No server data changed.' : 'Declined in this browser tab. No server data changed.');
 }
 function renderNextTrip() {
   const next = state.bookings.filter(booking => booking.status === 'CONFIRMED' && new Date(booking.startAt) > new Date())
@@ -626,28 +740,68 @@ function renderReservations(driver) {
   return `<section class="view reservations-view">
     ${pageHeading(driver ? 'My trips' : 'Reservations', title, copy, driver ? `<button class="button button-primary" data-view="discover">${svg('compass',17)} Find a charger</button>` : '')}
     ${driver ? renderNextTrip() : ''}
-    <div class="reservation-summary"><div><span>Confirmed</span><strong>${data ? data.confirmed : '—'}</strong></div><div><span>Cancelled</span><strong>${data ? data.cancelled : '—'}</strong></div><p>${driver ? 'You can cancel a confirmed reservation before it starts.' : 'Reservations update as drivers book or cancel charging time.'}</p></div>
-    <div class="reservation-controls"><div class="reservation-tabs">${[['','All'],['CONFIRMED','Confirmed'],['CANCELLED','Cancelled']].map(([value,label]) => `<button type="button" data-booking-status="${value}" class="${pager.status === value ? 'active' : ''}">${label}</button>`).join('')}</div>
+    ${state.previewReadOnly ? `<div class="booking-demo-note"><span>${svg('check', 16)} Approvals here are temporary. Nothing is saved to the server.</span>${state.demoBookingDecisions.size || state.demoStationPolicies.size ? '<button type="button" data-reset-demo-bookings>Reset demo changes</button>' : ''}</div>` : ''}
+    <div class="reservation-summary"><div><span>Confirmed</span><strong>${data ? data.confirmed : '—'}</strong></div><div><span>Awaiting host</span><strong>${data ? data.pending : '—'}</strong></div><div><span>Cancelled</span><strong>${data ? data.cancelled : '—'}</strong></div><p>${driver ? 'A pending request becomes a reservation only after host approval.' : 'Review pending requests before their start time.'}</p></div>
+    <div class="reservation-controls"><div class="reservation-tabs">${[['','All'],['PENDING_APPROVAL','Awaiting'],['CONFIRMED','Confirmed'],['DRAFT','Draft'],['REJECTED','Declined'],['EXPIRED','Expired'],['CANCELLED','Cancelled']].map(([value,label]) => `<button type="button" data-booking-status="${value}" class="${pager.status === value ? 'active' : ''}">${label}</button>`).join('')}</div>
       <label><span>Country</span><select id="booking-country"><option value="">All countries</option><option value="CZ" ${pager.country === 'CZ' ? 'selected' : ''}>Czechia</option><option value="US" ${pager.country === 'US' ? 'selected' : ''}>United States</option></select></label></div>
     <div class="booking-list">${!data ? '<div class="catalog-loading">Loading reservations…</div>' : data.items.length ? data.items.map(bookingRow).join('') : empty('calendar', driver ? 'No trips match these filters' : 'No reservations match these filters', 'Try another status or country.')}</div>
-    ${data && data.pages > 1 ? `<nav class="catalog-pagination" aria-label="Reservation pages"><button type="button" data-booking-page="${data.page - 1}" ${data.page === 0 ? 'disabled' : ''}>Previous</button><span>Page ${data.page + 1} of ${data.pages}</span><button type="button" data-booking-page="${data.page + 1}" ${data.page >= data.pages - 1 ? 'disabled' : ''}>Next</button></nav>` : ''}
+    <nav id="booking-pagination" class="catalog-pagination" aria-label="Reservation pages">${data && data.pages > 1 ? `<button type="button" data-booking-page="${data.page - 1}" ${data.page === 0 ? 'disabled' : ''}>Previous</button><span>Page ${data.page + 1} of ${data.pages}</span><button type="button" data-booking-page="${data.page + 1}" ${data.page >= data.pages - 1 ? 'disabled' : ''}>Next</button>` : ''}</nav>
   </section>`;
+}
+function previewBookingPage() {
+  const pager = state.bookingPager;
+  const countryBookings = state.bookings.filter(booking => !pager.country || booking.countryCode === pager.country);
+  const confirmed = countryBookings.filter(booking => booking.status === 'CONFIRMED').length;
+  const pending = countryBookings.filter(booking => booking.status === 'PENDING_APPROVAL').length;
+  const cancelled = countryBookings.filter(booking => booking.status === 'CANCELLED').length;
+  const now = Date.now();
+  const rank = booking => booking.status === 'PENDING_APPROVAL' && Date.parse(booking.startAt) >= now ? 0
+    : booking.status === 'CONFIRMED' && Date.parse(booking.startAt) >= now ? 1 : 2;
+  const matches = countryBookings.filter(booking => !pager.status || booking.status === pager.status)
+    .sort((a, b) => state.actor.kind === 'ADMIN'
+      ? Date.parse(b.startAt) - Date.parse(a.startAt) || a.id.localeCompare(b.id)
+      : rank(a) - rank(b) || (rank(a) === 1 ? Date.parse(a.startAt) - Date.parse(b.startAt)
+        : Date.parse(b.startAt) - Date.parse(a.startAt)) || a.id.localeCompare(b.id));
+  const pages = Math.ceil(matches.length / pager.size);
+  pager.page = Math.min(pager.page, Math.max(0, pages - 1));
+  return {items:matches.slice(pager.page * pager.size, (pager.page + 1) * pager.size), total:matches.length,
+    confirmed, pending, cancelled, page:pager.page, size:pager.size, pages};
+}
+function updateReservationContent() {
+  const current = $('#main-content .reservations-view');
+  if (!current) return;
+  const fresh = document.createElement('div');
+  fresh.innerHTML = renderReservations(state.actor.kind === 'DRIVER');
+  for (const selector of ['.next-trip','.booking-demo-note','.reservation-summary','.booking-list','#booking-pagination']) {
+    const before = current.querySelector(selector), after = fresh.querySelector(selector);
+    if (before && after) before.innerHTML = after.innerHTML;
+  }
+  current.querySelectorAll('[data-booking-status]').forEach(button =>
+    button.classList.toggle('active', button.dataset.bookingStatus === state.bookingPager.status));
+  current.querySelector('.booking-list')?.removeAttribute('aria-busy');
 }
 async function loadBookingPage() {
   if (state.view !== 'trips' && state.view !== 'bookings') return;
   const request = ++state.bookingRequest;
-  const pager = state.bookingPager;
-  pager.result = null;
-  $('#main-content').innerHTML = renderReservations(state.actor.kind === 'DRIVER');
+  const pager = state.bookingPager, actorId = state.actor.id;
+  if (state.previewReadOnly) {
+    pager.result = previewBookingPage();
+    updateReservationContent();
+    return;
+  }
+  $('#main-content .booking-list')?.setAttribute('aria-busy', 'true');
+  $('#main-content').querySelectorAll('[data-booking-status]').forEach(button =>
+    button.classList.toggle('active', button.dataset.bookingStatus === pager.status));
   const params = new URLSearchParams({status:pager.status,country:pager.country,page:String(pager.page),size:String(pager.size)});
   try {
     const result = await api('/bookings/page?' + params);
-    if (request !== state.bookingRequest || !['trips','bookings'].includes(state.view)) return;
+    if (request !== state.bookingRequest || state.actor.id !== actorId || !['trips','bookings'].includes(state.view)) return;
     pager.result = result;
-    $('#main-content').innerHTML = renderReservations(state.actor.kind === 'DRIVER');
+    updateReservationContent();
   } catch (error) {
     if (request !== state.bookingRequest) return;
-    $('#main-content').innerHTML = `<section class="view">${empty('calendar','Reservations unavailable',esc(error.message))}</section>`;
+    const list = $('#main-content .booking-list');
+    if (list) { list.innerHTML = empty('calendar','Reservations unavailable',esc(error.message)); list.removeAttribute('aria-busy'); }
   }
 }
 function renderInbox() {
@@ -681,9 +835,11 @@ async function openBooking(id) {
     $('#booking-station-name').textContent = station.name;
     $('#booking-station-detail').textContent = station.address + ', ' + station.city;
     $('#booking-highlights').innerHTML = `<span>${svg('bolt',16)} ${station.powerKw} kW</span><span>${esc(station.connector)}</span><span>${money(station.pricePerHourCents,station.countryCode)} / hour</span>`;
-    $('#book-button').textContent = state.previewReadOnly ? 'Reservation disabled in preview' : 'Confirm reservation';
+    $('#book-button').textContent = state.previewReadOnly ? 'Reservation disabled in preview'
+      : station.requiresBookingApproval ? 'Request host approval' : 'Confirm reservation';
     $('#booking-fineprint').textContent = state.previewReadOnly
       ? 'You can check availability in this demo. Reservations and payments cannot be created here.'
+      : station.requiresBookingApproval ? 'The host must approve your request before this slot is reserved. Payment is simulated.'
       : 'Payment is simulated. No card or money is involved.';
     suggestSlot(); $('#booking-dialog').showModal(); await checkAvailability();
   } catch (error) { toast(error.message, 'error'); }
@@ -714,17 +870,27 @@ async function checkAvailability() {
 }
 async function submitBooking(event) {
   event.preventDefault();
+  let draft;
   try {
-    await api('/bookings', {method:'POST', body:JSON.stringify({
+    draft = await api('/bookings', {method:'POST', body:JSON.stringify({
       stationId: state.selectedStation.id,
       startAt: new Date($('#start-at').value).toISOString(),
       endAt: new Date($('#end-at').value).toISOString()
     })});
+    const result = await api('/bookings/' + draft.id + '/confirm', {method:'POST'});
     $('#booking-dialog').close(); state.selectedStation = null;
-    toast('Reservation confirmed. Your charger is held for you.');
+    toast(result.status === 'PENDING_APPROVAL'
+      ? 'Request sent. The host will review it before your slot is reserved.'
+      : 'Reservation confirmed. Your charger is held for you.');
     state.view = 'trips'; await loadActorData(); render(); window.scrollTo({top:0,behavior:'instant'});
     setTimeout(async () => { if (state.actor?.kind === 'DRIVER') { await loadActorData(); renderChrome(); } }, 2200);
-  } catch (error) { toast(error.message,'error'); await checkAvailability(); }
+  } catch (error) {
+    if (draft) {
+      $('#booking-dialog').close(); state.selectedStation = null;
+      state.view = 'trips'; await loadActorData(); render();
+      toast('Request saved as a draft. Confirm it from My trips after resolving: ' + error.message, 'error');
+    } else { toast(error.message,'error'); await checkAvailability(); }
+  }
 }
 function closeDialog(id) {
   const dialog = $('#' + id);
@@ -736,6 +902,7 @@ function openStationDialog() {
     toast('Create a host or company profile first.', 'error'); return;
   }
   $('#station-form').reset();
+  $('#approval-required').checked = state.actor.kind === 'PERSON';
   const country = state.owned[0]?.countryCode || state.country;
   $('#station-country').value = country;
   window.refreshCustomControls?.();
@@ -773,7 +940,8 @@ async function submitStation(event) {
     name:form.get('name'), city:form.get('city'), address:form.get('address'),
     countryCode:form.get('countryCode'), connector:form.get('connector'),
     powerKw:Number(form.get('powerKw')), pricePerHourCents:Math.round(Number(form.get('price')) * 100),
-    accessNote:form.get('accessNote'), latitude:Number(form.get('latitude')), longitude:Number(form.get('longitude'))
+    accessNote:form.get('accessNote'), latitude:Number(form.get('latitude')), longitude:Number(form.get('longitude')),
+    requiresBookingApproval:form.has('requiresBookingApproval')
   };
   try {
     const station = await api('/stations', {method:'POST',body:JSON.stringify(body)});
@@ -941,7 +1109,15 @@ async function performAction(target) {
   }
   const bookingPage = target.closest('[data-booking-page]'); if (bookingPage) {
     state.bookingPager.page = Number(bookingPage.dataset.bookingPage);
-    await loadBookingPage(); window.scrollTo({top:0,behavior:'smooth'}); return;
+    await loadBookingPage(); return;
+  }
+  if (target.closest('[data-reset-demo-bookings]')) {
+    state.demoBookingDecisions.clear();
+    state.demoStationPolicies.clear();
+    state.demoNotifications.clear();
+    try { if (await loadActorData()) render(); toast('Demo changes reset.'); }
+    catch (error) { toast(error.message, 'error'); }
+    return;
   }
   const catalogPage = target.closest('[data-catalog-page]'); if (catalogPage) {
     state.adminCatalog.page = Number(catalogPage.dataset.catalogPage);
@@ -962,6 +1138,26 @@ async function performAction(target) {
   if (target.closest('[data-add-station]')) return openStationDialog();
   const close = target.closest('[data-close]'); if (close) return closeDialog(close.dataset.close);
   const schedule = target.closest('[data-schedule]'); if (schedule) return openSchedule(schedule.dataset.schedule);
+  const approvalPolicy = target.closest('[data-approval-policy]'); if (approvalPolicy) {
+    if (state.previewReadOnly) {
+      const id = approvalPolicy.dataset.approvalPolicy;
+      const station = state.owned.find(item => item.id === id);
+      if (!station || station.ownerId !== state.actor.id) { toast('Only this station’s owner can change its policy.', 'error'); return; }
+      const required = !station.requiresBookingApproval;
+      state.demoStationPolicies.set(id, required);
+      state.owned = applyDemoStationPolicies(state.owned);
+      render();
+      toast((required ? 'Host approval required' : 'Instant booking enabled') + ' in this browser tab. No server data changed.');
+      return;
+    }
+    try {
+      await api('/stations/' + approvalPolicy.dataset.approvalPolicy + '/booking-approval',
+        {method:'PATCH',body:JSON.stringify({required:approvalPolicy.dataset.required !== 'true'})});
+      toast('Booking approval policy updated. Existing requests keep their current status.');
+      await loadActorData(); render();
+    } catch (error) { toast(error.message,'error'); }
+    return;
+  }
   const scheduleTab = target.closest('[data-schedule-tab]'); if (scheduleTab) return setScheduleTab(scheduleTab.dataset.scheduleTab);
   const weeklyPreset = target.closest('[data-weekly-preset]'); if (weeklyPreset) return applyWeeklyPreset(weeklyPreset.dataset.weeklyPreset);
   if (target.closest('[data-reset-weekly]')) return resetWeekly();
@@ -989,17 +1185,47 @@ async function performAction(target) {
       await loadActorData(); render();
     } catch (error) { toast(error.message,'error'); } return;
   }
+  const confirmBooking = target.closest('[data-confirm-booking]'); if (confirmBooking) {
+    try {
+      const result = await api('/bookings/' + confirmBooking.dataset.confirmBooking + '/confirm',{method:'POST'});
+      toast(result.status === 'PENDING_APPROVAL' ? 'Sent to the host for approval.' : 'Reservation confirmed.');
+      await loadActorData(); render();
+    } catch (error) { toast(error.message,'error'); }
+    return;
+  }
+  const bookingDecision = target.closest('[data-booking-decision]'); if (bookingDecision) {
+    if (state.previewReadOnly) {
+      await simulateBookingDecision(bookingDecision.dataset.bookingDecision, bookingDecision.dataset.approve === 'true');
+      return;
+    }
+    try {
+      const result = await api('/bookings/' + bookingDecision.dataset.bookingDecision + '/decision',
+        {method:'POST',body:JSON.stringify({approve:bookingDecision.dataset.approve === 'true'})});
+      toast(result.status === 'CONFIRMED' ? 'Booking approved and slot reserved.'
+        : result.status === 'EXPIRED' ? 'Request expired before it could be approved.' : 'Booking request declined.');
+      await loadActorData(); render();
+    } catch (error) { toast(error.message,'error'); }
+    return;
+  }
   const cancel = target.closest('[data-cancel]'); if (cancel) {
     try { await api('/bookings/'+cancel.dataset.cancel+'/cancel',{method:'POST'}); toast('Reservation cancelled.');
       await loadActorData(); render();
     } catch (error) { toast(error.message,'error'); } return;
   }
   const payment = target.closest('[data-payment]'); if (payment) {
-    try { const charge = await api('/bookings/'+payment.dataset.payment+'/payment-preview');
-      toast(charge.status === 'PENDING' ? 'Payment preview is processing.' : `Payment ${charge.status.toLowerCase()} · ${money(charge.totalCents,state.bookings.find(b=>b.id===payment.dataset.payment)?.countryCode)} total · no money charged.`);
-    } catch (error) { toast(error.message,'error'); } return;
+    await openPaymentPreview(payment.dataset.payment); return;
   }
   const read = target.closest('[data-read]'); if (read) {
+    if (state.previewReadOnly && read.dataset.read.startsWith('demo-')) {
+      const message = [...state.demoNotifications.values()].find(item => item.id === read.dataset.read);
+      if (message && message.recipientId === state.actor.id) {
+        message.read = true;
+        state.notices = state.notices.map(item => item.id === message.id ? {...item, read:true} : item);
+        renderChrome();
+        if (state.view === 'inbox') $('#main-content').innerHTML = renderInbox();
+      }
+      return;
+    }
     try { await api('/notifications/'+read.dataset.read+'/read',{method:'PATCH'}); await loadActorData(); render();
     } catch (error) { toast(error.message,'error'); }
   }
@@ -1015,7 +1241,10 @@ async function init() {
     setInterval(async () => {
       if (!state.actor) return;
       try {
-        state.notices = await api('/notifications');
+        const actorId = state.actor.id;
+        const notices = await api('/notifications');
+        if (state.actor?.id !== actorId) return;
+        state.notices = withDemoNotifications(notices, actorId);
         renderChrome();
         if (state.view === 'inbox') $('#main-content').innerHTML = renderInbox();
       } catch { /* Keep the last known inbox when local services restart. */ }

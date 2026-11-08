@@ -1,0 +1,30 @@
+Zkušební termín: 2027-01-12T12:00:00Z až 2027-01-12T13:00:00Z
+OK  vytvoření návrhu HTTP: 201
+OK  návrh v databázi: DRAFT
+OK  návrh nemá účetní událost: 
+OK  návrh nemá platbu: 
+OK  potvrzení požadavku HTTP: 200
+OK  stav čeká na vlastníka: PENDING_APPROVAL
+OK  stav v databázi: PENDING_APPROVAL
+OK  čekání vytváří pouze REQUESTED: REQUESTED
+OK  čekání nemá platbu: 
+OK  přístupový pokyn není zveřejněn: 
+OK  cizí řidič nesmí schválit: 403
+OK  stav po zakázaném pokusu: PENDING_APPROVAL
+OK  vlastník schválí HTTP: 200
+OK  schválená rezervace: CONFIRMED
+OK  stav v databázi po schválení: CONFIRMED
+OK  události žádost a potvrzení: REQUESTED,BOOKED
+OK  opakované rozhodnutí je konflikt: 409
+OK  souběžný návrh lze vytvořit: 201
+OK  obsazený termín nelze potvrdit: 409
+OK  druhý návrh zůstává návrhem: DRAFT
+OK  zrušení HTTP: 200
+OK  zrušená rezervace: CANCELLED
+OK  uvolněný termín jde znovu požádat: 200
+OK  druhá žádost čeká: PENDING_APPROVAL
+OK  zamítnutí HTTP: 200
+OK  zamítnutý stav v databázi: REJECTED
+OK  zamítnutí bez platby: 
+OK  simulovaná platba po zrušení: CANCELLED
+TEST OK; vytvořené záznamy: 85bdf233-7a31-4e4a-af04-6346d14af046, 2790ad12-6cba-4d58-8cee-6cb919b7c39a

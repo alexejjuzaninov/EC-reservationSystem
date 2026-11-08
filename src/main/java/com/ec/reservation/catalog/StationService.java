@@ -32,14 +32,15 @@ public class StationService {
                           String address, String city, String connector, int powerKw,
                           int pricePerHourCents, String accessNote, boolean active,
                           String countryCode, double latitude, double longitude, boolean synthetic,
-                          String listingStatus) {}
+                          String listingStatus, boolean requiresBookingApproval) {}
     public record NewStation(@NotBlank String name, @NotBlank String address, @NotBlank String city,
                              @NotBlank @Pattern(regexp = "Type 2|CCS2") String connector,
                              @Min(1) @Max(350) int powerKw,
                              @Min(0) @Max(1000000) int pricePerHourCents, String accessNote,
                              @NotBlank @Pattern(regexp = "CZ|US") String countryCode,
                              @NotNull @DecimalMin("-90.0") @DecimalMax("90.0") Double latitude,
-                             @NotNull @DecimalMin("-180.0") @DecimalMax("180.0") Double longitude) {}
+                             @NotNull @DecimalMin("-180.0") @DecimalMax("180.0") Double longitude,
+                             Boolean requiresBookingApproval) {}
     public record StationPage(List<Station> items, long total, int page, int size, int pages) {}
 
     static final String FIELDS = "s.*, ST_Y(s.location) AS latitude, ST_X(s.location) AS longitude";
@@ -58,14 +59,15 @@ public class StationService {
             rs.getString("address"), rs.getString("city"), rs.getString("connector"),
             rs.getInt("power_kw"), rs.getInt("price_per_hour_cents"), rs.getString("access_note"),
             rs.getBoolean("active"), rs.getString("country_code"), rs.getDouble("latitude"),
-            rs.getDouble("longitude"), rs.getBoolean("synthetic"), rs.getString("listing_status"));
+            rs.getDouble("longitude"), rs.getBoolean("synthetic"), rs.getString("listing_status"),
+            rs.getBoolean("requires_booking_approval"));
     }
 
     static Station asPublic(Station station) {
         return new Station(station.id(), station.ownerId(), station.ownerName(), station.ownerKind(),
             station.name(), station.address(), station.city(), station.connector(), station.powerKw(),
             station.pricePerHourCents(), "", station.active(), station.countryCode(), station.latitude(),
-            station.longitude(), station.synthetic(), station.listingStatus());
+            station.longitude(), station.synthetic(), station.listingStatus(), station.requiresBookingApproval());
     }
 
     private void invalidateAfterCommit(String country) {
@@ -165,10 +167,10 @@ public class StationService {
             throw new ResponseStatusException(BAD_REQUEST, "The US demo covers the contiguous states");
         UUID id = UUID.randomUUID();
         String status = actor.kind().equals("PLATFORM") ? "APPROVED" : "PENDING";
-        primary.update("INSERT INTO catalog.stations (id, owner_id, owner_name, owner_kind, name, address, city, connector, power_kw, price_per_hour_cents, access_note, country_code, location, listing_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326), ?)",
+        primary.update("INSERT INTO catalog.stations (id, owner_id, owner_name, owner_kind, name, address, city, connector, power_kw, price_per_hour_cents, access_note, country_code, location, listing_status, requires_booking_approval) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326), ?, ?)",
             id, actor.id(), actor.name(), actor.kind(), input.name().trim(), input.address().trim(), input.city().trim(),
             input.connector().trim(), input.powerKw(), input.pricePerHourCents(), input.accessNote() == null ? "" : input.accessNote().trim(),
-            input.countryCode(), input.longitude(), input.latitude(), status);
+            input.countryCode(), input.longitude(), input.latitude(), status, Boolean.TRUE.equals(input.requiresBookingApproval()));
         if (status.equals("PENDING")) primary.update("INSERT INTO catalog.outbox (id, station_id, owner_id, event_type) VALUES (?, ?, ?, 'STATION_SUBMITTED')", UUID.randomUUID(), id, actor.id());
         invalidateAfterCommit(input.countryCode());
         return get(id);
@@ -181,6 +183,15 @@ public class StationService {
             throw new ResponseStatusException(FORBIDDEN, "This station belongs to another host");
         primary.update("UPDATE catalog.stations SET active = ? WHERE id = ?", active, id);
         invalidateAfterCommit(station.countryCode());
+        return get(id);
+    }
+
+    @Transactional("catalogTransactionManager")
+    public Station setBookingApproval(UUID id, IdentityService.User actor, boolean required) {
+        Station station = get(id);
+        if (!station.ownerId().equals(actor.id()))
+            throw new ResponseStatusException(FORBIDDEN, "Only the station owner can change booking approval");
+        primary.update("UPDATE catalog.stations SET requires_booking_approval = ? WHERE id = ?", required, id);
         return get(id);
     }
 

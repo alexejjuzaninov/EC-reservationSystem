@@ -8,10 +8,10 @@
   <title>EC — charging belongs everywhere</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=927d5086a414">
   <script src="/vendor/leaflet/leaflet.js" defer></script>
   <script src="/czech-cities.js" defer></script>
-  <script src="/app.js" defer></script>
+  <script src="/app.js?v=75ca95db67c4" defer></script>
   <script src="/custom-controls.js" defer></script>
 </head>
 <body class="role-driver">
@@ -33,7 +33,7 @@
         <button type="button" class="menu-button" id="menu-button" aria-label="Open navigation" aria-expanded="false">☰</button>
         <div class="breadcrumb"><span id="breadcrumb-space">Driver space</span><span class="breadcrumb-separator">/</span><strong id="breadcrumb-view">Discover</strong></div>
         <div class="header-actions">
-          <span id="preview-badge" class="preview-badge" hidden title="All data changes are disabled">View-only demo</span>
+          <span id="preview-badge" class="preview-badge" hidden title="Demo actions last only in this browser tab">Demo mode</span>
           <button type="button" id="notification-button" class="header-icon-button" aria-label="Notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></svg><span id="notification-count"></span></button>
           <label class="account-picker"><span class="account-avatar" id="account-avatar">A</span><span class="account-picker-copy"><small>Viewing as</small><select id="actor" aria-label="Choose demo account"></select></span><span class="account-chevron">⌄</span></label>
         </div>
@@ -60,6 +60,13 @@
     </form>
   </dialog>
 
+  <dialog id="payment-dialog" class="modal payment-modal" aria-labelledby="payment-title">
+    <button type="button" class="modal-close" data-close="payment-dialog" aria-label="Close payment preview">×</button>
+    <p class="modal-kicker">Reservation finances</p>
+    <h2 id="payment-title">Payment preview</h2>
+    <div id="payment-content" aria-live="polite"></div>
+  </dialog>
+
   <dialog id="station-dialog" class="modal station-modal">
     <form id="station-form">
       <button type="button" class="modal-close" data-close="station-dialog" aria-label="Close">×</button>
@@ -70,6 +77,7 @@
           <div class="form-grid"><label>City<input id="station-city" name="city" list="station-city-options" placeholder="Choose a city" required><datalist id="station-city-options"></datalist></label><label>Street address<input name="address" placeholder="Street and number" required></label></div>
           <div class="form-grid"><label>Connector<select name="connector"><option value="Type 2">Type 2</option><option value="CCS2">CCS2</option></select></label><label>Power, kW<input name="powerKw" type="number" min="1" max="350" value="11" required></label></div>
           <div class="form-grid"><label><span>Hourly price · <b id="price-currency">CZK</b></span><input name="price" type="number" min="0" max="10000" value="90" required></label><label>Access instructions<input name="accessNote" placeholder="Shared only after booking"></label></div>
+          <label class="approval-choice"><input id="approval-required" name="requiresBookingApproval" type="checkbox"><span><strong>Review booking requests</strong><small>Drivers wait for your decision before a slot is reserved.</small></span></label>
           <input id="station-latitude" name="latitude" type="hidden" required>
           <input id="station-longitude" name="longitude" type="hidden" required>
           <div class="pin-summary"><span class="pin-summary-symbol">ϟ</span><div><strong id="pin-summary-title">Location pin ready</strong><small id="pin-summary-coordinates">Choose a point on the map</small></div></div>

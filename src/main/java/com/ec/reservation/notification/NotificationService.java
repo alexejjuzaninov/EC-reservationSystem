@@ -62,7 +62,17 @@ public class NotificationService {
             if (event.type().equals("BOOKED")) {
                 send(event.eventId(), part.driverId(), "BOOKING", "Reservation confirmed", "Your slot at " + part.stationName() + " is reserved.", event.bookingId(), null);
                 send(event.eventId(), part.ownerId(), "BOOKING", "New reservation", "A driver reserved a slot at " + part.stationName() + ".", event.bookingId(), null);
-            } else {
+            } else if (event.type().equals("REQUESTED")) {
+                send(event.eventId(), part.driverId(), "BOOKING", "Approval requested", "The host will review your request for " + part.stationName() + ".", event.bookingId(), null);
+                send(event.eventId(), part.ownerId(), "BOOKING", "Booking needs your approval", "Review the new request for " + part.stationName() + ".", event.bookingId(), null);
+            } else if (event.type().equals("REJECTED")) {
+                send(event.eventId(), part.driverId(), "BOOKING", "Request declined", "The host declined your request for " + part.stationName() + ".", event.bookingId(), null);
+            } else if (event.type().equals("EXPIRED")) {
+                send(event.eventId(), part.driverId(), "BOOKING", "Request expired", "Your request for " + part.stationName() + " expired before approval.", event.bookingId(), null);
+                send(event.eventId(), part.ownerId(), "BOOKING", "Request expired", "The pending request for " + part.stationName() + " expired.", event.bookingId(), null);
+            } else if (event.type().equals("REQUEST_CANCELLED")) {
+                send(event.eventId(), part.ownerId(), "BOOKING", "Request withdrawn", "The driver withdrew a request for " + part.stationName() + ".", event.bookingId(), null);
+            } else if (event.type().equals("CANCELLED")) {
                 send(event.eventId(), part.driverId(), "BOOKING", "Reservation cancelled", "Your slot at " + part.stationName() + " was released.", event.bookingId(), null);
                 send(event.eventId(), part.ownerId(), "BOOKING", "Reservation cancelled", "The slot at " + part.stationName() + " is available again.", event.bookingId(), null);
             }

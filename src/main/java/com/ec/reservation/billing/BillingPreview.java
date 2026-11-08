@@ -35,7 +35,7 @@ public class BillingPreview {
             if (event.type().equals("BOOKED")) {
                 billing.update("INSERT INTO billing.simulated_charges (booking_id, total_cents, platform_fee_cents, owner_payout_cents, status) VALUES (?, ?, ?, ?, 'SIMULATED') ON CONFLICT (booking_id) DO NOTHING",
                     event.bookingId(), event.total(), event.fee(), event.total() - event.fee());
-            } else {
+            } else if (event.type().equals("CANCELLED")) {
                 billing.update("INSERT INTO billing.simulated_charges (booking_id, total_cents, platform_fee_cents, owner_payout_cents, status) VALUES (?, ?, ?, 0, 'CANCELLED') ON CONFLICT (booking_id) DO UPDATE SET status = 'CANCELLED', owner_payout_cents = 0",
                     event.bookingId(), event.total(), event.fee());
             }

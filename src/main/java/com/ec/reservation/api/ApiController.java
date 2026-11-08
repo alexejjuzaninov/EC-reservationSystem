@@ -166,6 +166,15 @@ public class ApiController {
         return stations.setActive(id, actor(user), Boolean.TRUE.equals(input.get("active")));
     }
 
+    @PatchMapping("/stations/{id}/booking-approval")
+    StationService.Station bookingApproval(@PathVariable UUID id,
+                                           @RequestHeader(value = "X-Demo-User", defaultValue = DEFAULT_ACTOR) String user,
+                                           @RequestBody Map<String, Boolean> input) {
+        if (!input.containsKey("required") || input.get("required") == null)
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose an approval policy");
+        return stations.setBookingApproval(id, actor(user), input.get("required"));
+    }
+
     @GetMapping("/admin/stations/pending")
     List<StationService.Station> pendingStations(@RequestHeader(value = "X-Demo-User", defaultValue = DEFAULT_ACTOR) String user) {
         return stations.pending(actor(user));
@@ -207,6 +216,21 @@ public class ApiController {
     BookingService.Booking createBooking(@RequestHeader(value = "X-Demo-User", defaultValue = DEFAULT_ACTOR) String user,
                                          @Valid @RequestBody BookingService.NewBooking input) {
         return bookings.create(actor(user), input);
+    }
+
+    @PostMapping("/bookings/{id}/confirm")
+    BookingService.Booking confirmBooking(@PathVariable UUID id,
+                                          @RequestHeader(value = "X-Demo-User", defaultValue = DEFAULT_ACTOR) String user) {
+        return bookings.confirm(id, actor(user));
+    }
+
+    @PostMapping("/bookings/{id}/decision")
+    BookingService.Booking decideBooking(@PathVariable UUID id,
+                                         @RequestHeader(value = "X-Demo-User", defaultValue = DEFAULT_ACTOR) String user,
+                                         @RequestBody Map<String, Boolean> input) {
+        if (!input.containsKey("approve") || input.get("approve") == null)
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose approve or decline");
+        return bookings.decide(id, actor(user), input.get("approve"));
     }
 
     @PostMapping("/bookings/{id}/cancel")

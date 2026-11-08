@@ -16,4 +16,4 @@ Prototyp používá Spring Boot, PostgreSQL/PostGIS, čtecí repliku, Redis a Fl
 
 **Lokální spuštění:** `docker compose up -d --build`, potom otevřít `http://localhost:18080`. Účet se pro ukázku přepíná v horní liště.
 
-České podklady k předmětu, diagramy a obrazovky jsou v [zadani](zadani/README.md). Cílová mikroservisní architektura je v dokumentaci jasně oddělena od současného prototypu.
+České podklady k předmětu, diagramy a obrazovky jsou v [zadani](zadani/README.md).

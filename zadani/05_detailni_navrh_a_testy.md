@@ -15,6 +15,8 @@
 
 `create(actor, stationId, startAt, endAt)` vrací `DRAFT` jen řidiči s platným budoucím intervalem. `confirm(id, actor)` znovu ověří dostupnost: bez politiky schvalování vrací `CONFIRMED`, jinak `PENDING_APPROVAL`. `decide(id, owner, approve)` vyžaduje vlastníka a čekající žádost; zamítnutí vrací `REJECTED`, schválení po nové kontrole vrací `CONFIRMED`. `cancel(id, actor)` před začátkem uvolní termín a je idempotentní pro již zrušený stav. Chybný vstup → 400, cizí aktér → 403, neznámé ID → 404, neplatný přechod nebo kolize → 409.
 
+**Algoritmus kolize:** pro stejnou stanici blokuje pouze `CONFIRMED`; intervaly se překrývají právě když `existing.start < requested.end` a `requested.start < existing.end`. Navazující intervaly se tedy mohou rezervovat. Předběžný výsledek dostupnosti není závazný; při zápisu rozhoduje DB constraint nad polootevřeným intervalem `[start,end)`.
+
 **Schválení v transakci:**
 
 1. Ověř vlastníka, zamkni rozvrh stanice a žádost.
@@ -38,5 +40,7 @@
 | T9 · expirace | `EXPIRED` + událost; bez platby | PASS |
 
 Provedené průchody: [rezervace](dukazy/overeni_rezervaci.txt), [paralelní rozhodnutí](dukazy/overeni_paralelniho_schvaleni.txt), [souběh a expirace](dukazy/overeni_soubehu_a_expirace.txt), [politika stanice](dukazy/overeni_politiky_stanice.txt). Oracle je nezávislý SQL dotaz nad stavem rezervace, outboxu a plateb, nikoli porovnání se současným výstupem metody. Testy používají izolované vzorové termíny; jednorázově ověřená paralelní dvojice není zátěžový test.
+
+**Úroveň ověření:** T1–T9 jsou integrační průchody přes HTTP a PostgreSQL. T8 ověřuje databázový invariant při dvou souběžných spojeních.
 
 Reprodukce: spustit aplikaci a `python verification/overeni_rezervaci.py`; další scénáře jsou ve složce `verification/`. Testovací skripty vytvářejí označené vzorové záznamy.

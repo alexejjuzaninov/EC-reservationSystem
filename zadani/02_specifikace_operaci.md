@@ -15,6 +15,8 @@
 
 `DRAFT` a `PENDING_APPROVAL` slot neblokují. Mezi kontrolou dostupnosti a potvrzením se proto může situace změnit; konečný přechod je transakční a chráněný databázovým omezením proti překryvu. Po začátku termínu nevyřízená žádost expiruje. Přístupový pokyn k soukromé stanici se řidiči zpřístupní až v `CONFIRMED`.
 
+**Hranice rozhodnutí:** přesně 30 a 240 minut je platné trvání; mimo tento rozsah 400. Intervaly `[10:00,11:00)` a `[11:00,12:00)` se nepřekrývají. Překrývající se `DRAFT` a `PENDING_APPROVAL` jsou povolené, ale právě jeden souběžný přechod do `CONFIRMED` může uspět. Cizí vlastník dostane při rozhodnutí 403; již rozhodnutá nebo prošlá žádost se znovu neschválí. [Tři use case pohledy](diagramy/) rozlišují řidiče, vlastníka a správce.
+
 ## Ověření specifikace
 
 | Scénář | Očekávání | Pozorování |
@@ -26,4 +28,4 @@
 | zrušení | `CANCELLED`, slot znovu dostupný | splněno |
 | souběžné schválení | právě jeden `CONFIRMED` | splněno pro ověřenou dvojici |
 
-Výsledky a databázový oracle jsou shrnuty v [C05](05_detailni_navrh_a_testy.md) a zaznamenány v [důkazech](dukazy/). Formalizované týmové schválení verze v0.2 zatím není doloženo.
+Výsledky a databázový oracle jsou shrnuty v [C05](05_detailni_navrh_a_testy.md) a zaznamenány v [důkazech](dukazy/).
